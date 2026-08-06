@@ -78,6 +78,31 @@ End state: sharded Redis zsets per window (rank), Kafka → DB (durability), his
 | DynamoDB (GSI score as sort key) | Top-K per partition OK; global rank = full scan; write-sharded GSIs get complex | Rejected for ranks | Serverless shop wanting managed durability tier; pair with in-memory ranker |
 | Aerospike / KeyDB / Dragonfly | Same sorted-structure idea, better memory/threading | Viable substitutes | >1 TB in-memory footprint or when Redis single-threaded CPU is the wall |
 
+#### Sorted-set internals — why the complexities are what they are
+
+A zset above the small-set threshold is **two structures over the same entries**:
+
+- **dict (hash table)**: member → score. Answers `ZSCORE` in O(1); this is what makes `ZADD` on an existing member cheap to detect (look up old score first) and what the only-if-higher compare reads.
+- **skiplist**: nodes ordered by (score, then member lexicographically — ties are deterministic). A probabilistic multi-level linked list: each node gets level ℓ with probability p^ℓ (Redis p=0.25, max 32 levels), giving expected O(log N) search like a balanced tree but with trivially simple insert/delete (no rotations) and cheap *forward range iteration* (level-0 is a plain linked list with a backward pointer for reverse scans).
+- **Spans**: each forward pointer at each level stores how many level-0 nodes it skips. `ZRANK` descends from the top level accumulating spans — rank falls out of the same O(log N) walk that finds the node. This is the one field that separates "sorted structure" from "ranking structure"; a plain balanced BST without subtree-size augmentation cannot do this. `ZRANGE ... BYRANK` similarly seeks by cumulative span in O(log N), then walks K nodes.
+
+Command costs, derived from the two structures:
+
+| Command | Cost | Which structure pays, and why |
+|---|---|---|
+| `ZSCORE` | O(1) | dict lookup only |
+| `ZADD` (new member) | O(log N) | dict insert O(1) + skiplist insert O(log N) |
+| `ZADD` (score change) | O(log N) | dict tells us the old score O(1); skiplist node deleted and reinserted at new position |
+| `ZINCRBY` | O(log N) | same as score-change ZADD |
+| `ZRANK` / `ZREVRANK` | O(log N) | skiplist descent summing spans — no scan |
+| `ZREVRANGE 0 K-1` | O(log N + K) | span-seek to rank 0, then walk K level-0 nodes |
+| `ZCOUNT min max` | O(log N) | two span-summing boundary walks; count = rank difference |
+| `ZRANGEBYSCORE ... LIMIT off n` | O(log N + off + n) | the offset is *walked* — deep paging inside a shard still wants cursor bounds |
+| `ZREM` | O(log N) | dict delete O(1) + skiplist unlink O(log N) |
+| `ZRANGEBYLEX` | O(log N + K) | only meaningful when all scores equal — not our case |
+
+Small-set encoding: below thresholds (`zset-max-listpack-entries` 128, value length 64) Redis stores the zset as a flat listpack (contiguous buffer, O(N) ops, tiny memory). Irrelevant for the 50M board but exactly relevant for per-user or per-clan mini-boards — millions of tiny zsets stay in listpack encoding and the ~120 B/entry estimate drops several-fold. Memory drivers for the big board: every entry pays dict entry + robj/SDS member (stored once, shared by both structures) + skiplist node with avg 1/(1−p) ≈ 1.33 levels → the 100–130 B/entry figure in §1 — quote it, it's the number that forces sharding.
+
 ### Sharding topology
 
 | Option | Pros | Cons | Verdict |
@@ -289,6 +314,26 @@ List<Entry> topK(String windowKey, int k) {
 
 Correctness: each shard's top-k must be fetched (not top-k/S) because one shard could hold all global top-k. Cost: S × O(log n_s + k) Redis work + O(k log S) merge; with S=16, k=100 this is microseconds of CPU.
 
+Exact global rank across shards, spelled out (the "1 + Σ ZCOUNT" one-liner as code):
+
+```java
+long exactRank(String windowKey, long userId) {
+    String own = shardRouter.shardKey(windowKey, userId);
+    Double composite = store.scoreOf(own, userId);
+    if (composite == null) return NOT_RANKED;
+
+    // One pipelined ZCOUNT per shard, all in flight concurrently.
+    // Bound is EXCLUSIVE of my own composite: "(<composite>" .. "+inf"
+    List<CompletableFuture<Long>> counts = shardRouter.allShardKeys(windowKey).stream()
+        .map(k -> store.countAboveAsync(k, composite))     // ZCOUNT k (composite +inf
+        .toList();
+    long above = counts.stream().mapToLong(CompletableFuture::join).sum();
+    return 1 + above;                                       // dense rank, ties broken by composite
+}
+```
+
+Two subtleties worth saying: the exclusive bound plus composite tie-break packing means no two members share a composite, so "count strictly above" is unambiguous — with raw tied scores you must define competition vs. dense ranking explicitly. And the S ZCOUNTs run against a snapshot-in-motion: concurrent writes can shift the answer by a few positions between shard reads. That's inherent to scatter-gather and fine for display; the only rank that must be exactly right — prize cutoffs — is computed on the *frozen* board where nothing moves.
+
 ### (c) Approximate rank via histogram buckets
 
 ```java
@@ -308,6 +353,10 @@ long approxRank(String windowKey, long userId) {
 ```
 
 Error bound: at most the in-bucket population misestimate, ≈ bucket_count × (1 − 1/S) worst case; with ~2,000 exponential buckets over 50M users, typical bucket ≈ 25k users → tail rank error ≪ 0.1%. Top ranks bypass this via `ExactRankStrategy`. (Redis Stack alternative: `TDIGEST.ADD` on ingest, `TDIGEST.RANK`/`CDF` for percentile — better tails, no per-bucket ZCOUNT.)
+
+Maintenance detail interviewers probe: the histogram must be updated on *score moves*, not just inserts — a user jumping buckets is `HINCRBY old_bucket -1` + `HINCRBY new_bucket +1`, emitted from the same Lua script that did the ZADD (it knows old and new composite). If counters drift (crashes between the two increments), a nightly rebuild from one `ZRANGEBYSCORE` sweep per bucket boundary resets them — bounded drift, cheap repair, never user-visible because the error bound already dominates.
+
+Why **count-min sketch is the wrong tool here** (name it before the interviewer does): CMS answers *point frequency* queries ("how many times was key X seen") with one-sided overestimate error; rank needs a *prefix/suffix sum over an ordered score domain*, which CMS doesn't order. You'd have to query every score above yours — nonsense. CMS earns a place elsewhere in this system: per-user submit-rate estimation in the anti-cheat path ("has this user submitted improbably many times this hour") where approximate frequency over a huge key space is exactly the question, in kilobytes instead of a 50M-entry counter table. Bucket histograms / t-digest for rank, CMS for frequency — matching sketch to query type is the senior signal.
 
 ### (d) Only-improve semantics: ZADD GT / Lua CAS
 
@@ -349,6 +398,82 @@ Note: for pure raw scores without tie-breaking, plain `ZADD GT` suffices and GT 
 
 **Anti-cheat / outlier quarantine.** Impossible scores (beyond per-mode max, > μ+kσ, impossible rate) are quarantined: persisted to Kafka/DB flagged, *not* written to Redis. Async review can promote them (replay into zsets) or ban. Boards must also support *removal*: `ZREM` across window keys + snapshot invalidation — design the admin path up front, cheaters at #1 are a certainty.
 
+**Anti-cheat validation pipeline (expanded).** Three tiers, ordered by latency budget:
+1. *Synchronous (in the submit path, <5 ms)*: schema + auth (game-server-signed submission — clients never call the score API directly), per-mode hard bounds (score ≤ theoretical max, match duration ≥ minimum), monotonic sanity (accumulate-mode delta ≤ max-per-match), rate check via CMS/token bucket per user. Fail → 422 or silent quarantine (don't teach cheaters your thresholds by rejecting loudly).
+2. *Near-line (Kafka consumer, seconds)*: statistical outliers vs. the user's own history (sudden 10× jump), vs. cohort distribution (z-score per mode/skill band), impossible session patterns (two matches overlapping in time, geo-impossible device switches). Verdict flips a `suspect` flag; scores already on the board get *shadow-quarantined* — visible to the cheater (so they don't adapt), filtered from everyone else's reads via a small denylist set checked by the snapshot refresher.
+3. *Offline (batch, hours)*: model-based detection over full history, replay validation for top-N finishers before prize payout — prize boards are never paid from live state, only from the frozen snapshot *after* the review job signs off.
+The pipeline placement rule: everything that can wait, waits — the submit path carries only checks cheap enough to never blow the write SLO.
+
+Shard rebuild pseudocode (grade (b)/(c) below — the code that makes "Redis is rebuildable" true):
+
+```java
+void rebuildShard(String windowKey, int shard) {
+    store.delete(shardKey(windowKey, shard));                       // start clean (UNLINK)
+    long applied = 0;
+    if (kafka.retentionCovers(windowStart(windowKey))) {
+        // Grade (b): replay the window's events; idempotent (GT + event-id dedup),
+        // so re-processing an overlap or replaying twice is harmless.
+        for (ScoreEvent e : kafka.replay("score-events", windowStart(windowKey))) {
+            if (shardRouter.shardFor(e.userId()) != shard) continue;
+            if (!withinWindow(e.achievedAt(), windowKey)) continue;
+            store.upsertIfHigher(shardKey(windowKey, shard), e.userId(),
+                                 combiner.pack(e.score(), e.achievedAtSec()));
+            applied++;
+        }
+    } else {
+        // Grade (c): cold rebuild from the DB system of record, keyset-paginated,
+        // bulk ZADD in pipelined batches (~5k) — never one round trip per row.
+        for (List<ScoreRow> page : db.scanScores(windowKey, shard, PAGE_5000)) {
+            store.bulkUpsert(shardKey(windowKey, shard), page.stream()
+                .map(r -> entry(r.userId(), combiner.pack(r.score(), r.achievedAtSec())))
+                .toList());
+            applied += page.size();
+        }
+    }
+    histogram.rebuild(windowKey);          // tiny; do FIRST in real runs so approx ranks return early
+    snapshotRefresher.forceRefresh(windowKey);
+    log.info("rebuilt shard {} of {}: {} entries", shard, windowKey, applied);
+}
+```
+
+**Recovery & rebuild — the full runbook (write-behind's payoff).** Three failure grades: (a) *Node crash, replica intact*: failover promotes the replica; loss ≤ replication lag (ms). (b) *Shard lost entirely (both copies)*: only 1/S of members are affected; rebuild that shard by replaying Kafka from the topic start of the window (daily = at most 24 h of that shard's events; `hash(user_id)` picks out its events) — with `ZADD GT` + event-id dedup, replay is idempotent and order-insensitive, so no coordination needed; minutes to restore. (c) *Kafka retention already expired (all-time board, cold rebuild)*: rebuild from the DB system of record — a paged scan of `scores` for the window, bulk `ZADD` in pipelined batches of ~5k; 50M rows at ~200k inserts/s pipelined ≈ 5 min/shard-fleet. Serve during rebuild in degraded mode: top-K from the last snapshot (stale but plausible), rank endpoints return `approx=true` from the histogram (rebuilt first — it's tiny). Key doc sentence: *RPO = 0 after replay, RTO = minutes, and both are testable* — run the shard-rebuild drill in staging monthly, because an untested replay path is a fictional one.
+
+**Seasonal reset & archival.** Seasons (monthly/quarterly ranked ladders) are windows with ceremony. At season close: freeze (stop writes after grace), materialize the *complete* final ranking — not just top-K — into `leaderboard_snapshots` (rank, user, score, reward tier) because season rewards touch every participant; batch-grant rewards from that table (idempotent per (season, user)); archive the full standing to columnar storage (Parquet in S3) for history screens and analytics; then `UNLINK` (not `DEL` — lazy-free, a 60 GB zset freed synchronously stalls the event loop for seconds) the Redis keys after a 7-day grace. Season *start* is the inverse: pre-create empty keys, optionally seed placement from MMR rather than zero (product choice), and warm the snapshot cache before announcing — the first minute of a new season is a write *and* read stampede. "Last season's board" is served entirely from the snapshot/archive tier; Redis holds only live windows, which is what keeps the memory budget flat across years of operation.
+
+Season lifecycle as a state machine (WindowManager enforces; every arrow is a job with an idempotency key):
+
+| State | Entered by | Writes? | Reads served from | Exit |
+|---|---|---|---|---|
+| PENDING | pre-create job (T-15 min) | no | — | clock → ACTIVE |
+| ACTIVE | season start | yes (live Lua path) | snapshot cache + live zsets | close time → GRACE |
+| GRACE | close time | only events with in-window `achieved_at` | live zsets (banner: "finalizing") | grace expiry (~5 min) → FROZEN |
+| FROZEN | freeze job | no (writes 409) | frozen snapshot, CDN | review sign-off → SETTLED |
+| SETTLED | reward-grant job done | no | snapshot + archive | +7 d → ARCHIVED |
+| ARCHIVED | UNLINK job | no | Parquet/archive tier only | terminal |
+
+The GRACE→FROZEN edge is where the §7 rollover race and the freeze semantics meet: routing by `achieved_at` during grace is what makes "score at 23:59:59.9, processed at 00:00:00.1" land correctly without holding writes.
+
+**Social / friends leaderboards.** Global-rank-then-filter is upside down for friend boards — a friend list is ~100–500 people, so compute in the read path: fetch the friend list (social graph service, cached), pipeline `ZSCORE` for all F friends against the window's shard keys (each O(1)), sort in the service — O(F log F), sub-ms, no extra storage, always fresh, works for every window for free. Two escalations worth naming: (1) *very large F* (streamers with 100k followers) — precompute a materialized per-user zset updated by a follower-fanout consumer, i.e., the same push-vs-pull fanout trade-off as a social feed; threshold ~1–2k friends. (2) *Clan/guild boards* — that's a group aggregate, not a filter: maintain `lb:{game}:clan:{window}` zsets keyed by clan_id, `ZINCRBY` on member submissions (accumulate) or recompute clan score from member top-N nightly (max-based). Friends boards also change the *privacy* answer: visibility checks (blocked users, private profiles) apply at read time in the service layer — one more reason not to bake the social graph into Redis.
+
+```java
+List<Entry> friendsBoard(String windowKey, long userId, Window w) {
+    List<Long> friends = socialGraph.friendsOf(userId);          // cached, ~100-500 ids
+    friends.add(userId);                                         // always include self
+    // Group by shard so each Redis node gets ONE pipelined ZMSCORE, not F round trips.
+    Map<String, List<Long>> byShard = friends.stream()
+        .collect(groupingBy(f -> shardRouter.shardKey(windowKey, f)));
+    List<Entry> entries = byShard.entrySet().parallelStream()
+        .flatMap(e -> store.scoresOf(e.getKey(), e.getValue()).stream())  // ZMSCORE key f1 f2 ...
+        .filter(en -> en.score() != null)                        // friend hasn't played this window
+        .filter(privacy::visibleTo(userId))
+        .sorted(comparingDouble(Entry::score).reversed())
+        .toList();
+    return withDenseRanks(entries);                              // ranks 1..F, local to this board
+}
+```
+
+Cost: |shards touched| pipelined round trips, O(F log F) sort — sub-ms for any human-sized friend list, zero storage, and the ranks are *friend-local* by construction (rank 3 of 212 friends), which is the product semantics anyway.
+
 ## 8. Trade-off Summary & Interview Soundbites
 
 | Decision | Trade-off accepted |
@@ -371,10 +496,17 @@ Note: for pure raw scores without tie-breaking, plain `ZADD GT` suffices and GT 
 - "Tie-breaking is bit-packing: score in the high bits, inverted timestamp in the low bits — and I must stay under 2^53 because zset scores are doubles."
 - "Windows are keys, not filters: `lb:daily:2026-08-06` with a TTL; rollover is creating a key, not deleting rows."
 - "ZADD GT is compare-and-set on the server — the naive ZSCORE-then-ZADD read-modify-write loses races."
+- "Match the sketch to the query: histograms/t-digest answer ordered prefix sums (rank), count-min answers point frequency (abuse rates) — CMS can't rank because it doesn't order."
+- "Season close is freeze, materialize the full ranking, pay prizes from the immutable snapshot, then UNLINK — never DEL a 60 GB key on a single-threaded event loop."
+- "A rebuild path you've never run is fiction — replay-from-Kafka is idempotent by construction (GT + event-id dedup), so we drill it monthly."
 
 **Common follow-ups**
 - *Rank of a user far outside top-K, cheaply?* Histogram CDF: O(1) suffix-sum above the user's bucket + one ZCOUNT to refine; or t-digest for a percentile. Exact fallback: parallel ZCOUNT per shard (~S ops, still ms).
 - *500M users?* Same shape, more shards: ~60 GB → S=32–64 shards across a cluster; top-K path unchanged (k-way merge is O(k log S)); push all-time long-tail fully to approximate ranks; consider Dragonfly/Aerospike if memory economics bite.
 - *Why not ZINCRBY for high-score games?* ZINCRBY is accumulate semantics; high-score boards need max semantics — an increment on retry or a lower second run corrupts the board. ZINCRBY is right only for total-points modes, and then only behind event-id dedup because increments aren't idempotent.
 - *Paging through ranks?* Never OFFSET-style deep `ZREVRANGE` for arbitrary pages from clients; use cursor pagination keyed by `(score, member)` with `ZREVRANGEBYSCORE (lastScore -inf LIMIT 0 pageSize` (exclusive bound), which is O(log N + page) regardless of depth. Cap page depth product-side — nobody browses page 40,000.
-- *Friends-only leaderboard?* Don't rank globally then filter; fetch friends' scores (MGET-style ZSCORE pipeline, friend lists are ~hundreds) and sort in the service — O(F log F) beats any global structure.
+- *Friends-only leaderboard?* Don't rank globally then filter; fetch friends' scores (MGET-style ZSCORE pipeline, friend lists are ~hundreds) and sort in the service — O(F log F) beats any global structure. Precompute a materialized per-user zset only past ~1–2k friends (follower-fanout, same push/pull trade-off as a feed).
+- *Why is ZRANK O(log N) — what's in the skiplist that makes rank cheap?* Span counts: every forward pointer stores how many level-0 nodes it skips, so the descent that locates the member sums spans and arrives holding the rank. A sorted structure without size/span augmentation (plain BST, plain sorted list) can find the node in O(log N) but still needs O(N) to know its position — the span field is the entire reason Redis is *the* leaderboard store.
+- *Redis loses everything and Kafka retention has expired — now what?* The DB is score truth: rebuild each shard with a paged scan + pipelined bulk ZADD (~minutes for 50M entries), rebuild the tiny histogram first so approximate ranks come back immediately, and serve stale top-K from the last snapshot during the gap. Degraded, honest, and bounded — never blocked on "hope the RDB file is good."
+- *How do you delete a banned cheater's presence everywhere?* One admin operation fans out: `ZREM` on every live window key (all shards), tombstone in the DB (keep the row flagged, don't delete — audit), snapshot invalidation + immediate refresh, histogram decrement, and denylist entry so any in-flight Kafka events for that user are dropped by the sink. If they were in a *frozen* prize snapshot, that's a governance decision, not a technical one — snapshots are immutable; issue a correction record.
+- *Multi-region?* Keep each board's write path in one home region (rank state doesn't merge well — two regions' zsets can't be reconciled without replaying one into the other) and geo-replicate reads: snapshot cache and histogram CDF replicate trivially (they're just blobs), giving remote regions local top-K/approx-rank; exact-rank and submit calls pay the cross-region hop. Global writes with regional Redis + async merge is offerable only with `GT` semantics (max merges commutatively) — accumulate boards cannot split-brain safely.

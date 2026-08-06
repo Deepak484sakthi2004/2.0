@@ -355,6 +355,20 @@ Note `BETA = 1.0` default; log of uniform(0,1] is negative, so the term pulls "n
 
 **Cache penetration** (queries for keys that don't exist — attacker or bug — every one a guaranteed DB hit). Fix: cache negative results (`"NULL"` sentinel, short TTL 30 s) and/or a Bloom filter of valid IDs in front of the DB path; reject non-members without touching the DB. Trade-off: Bloom false positives (~1%) still pass through; deletions need a counting filter or periodic rebuild.
 
+**Negative caching, done properly.** The sentinel approach has three sharp edges worth naming: (1) *TTL asymmetry* — negative entries must have a much shorter TTL than positives (30 s vs 600 s) because "not found" flips to "found" the moment the row is inserted, and there is often no write-path invalidation for a key that didn't exist when the writer looked (the `INSERT` path must also DEL the negative key — easy to forget, so short TTL is the backstop); (2) *memory abuse* — an attacker enumerating random IDs fills the cache with negative entries and evicts real ones; cap the negative namespace with its own small LRU region or store negatives only in L1, and rate-limit by source before caching; (3) *sentinel typing* — use a distinct marker (`0x00` byte, or a wrapper `{found:false}`) that the deserializer handles explicitly; a stringly-typed `"NULL"` will eventually be returned to a user as a product description. DNS resolvers formalized all of this decades ago (RFC 2308 negative TTL from the SOA record) — worth citing as prior art.
+
+**Cache warming strategies.** Cold caches appear on: new node join, cluster restart, region failover, generation bump (schema-version flush), and big deploys. Four techniques, in increasing sophistication: (1) **replay warming** — continuously log a sampled key-frequency stream (say 1-in-100 GETs to Kafka); on cold start, a warmer replays the top-K keys through the normal `getOrLoad` path at a controlled rate (e.g., 5 K loads/s, well under DB headroom); (2) **snapshot shipping** — for Redis, seed a new replica from an RDB snapshot of a healthy peer, then promote — the cache starts ~minutes stale but hot, and short TTLs converge it; (3) **shadow traffic** — before cutting a new cluster into service, tee live read traffic to it (populate-only, responses discarded) for 10–30 min until its hit ratio crosses a threshold gate (e.g., ≥ 85%) that the LB checks before admitting it; (4) **priming on deploy** — the app on boot fetches its own critical config/entity set before reporting healthy. State the gate explicitly in the interview: *a cache node should not take traffic until its measured hit ratio clears a floor* — admitting a cold node is a self-inflicted partial stampede.
+
+**Consistent hashing vs Redis Cluster slots — know both mechanisms.** Classic consistent hashing (memcached/Ketama): hash each server to ~100–200 virtual nodes on a ring; a key goes to the first vnode clockwise from `hash(key)`. Adding a server steals ~1/N of keyspace, spread evenly thanks to vnodes; removing one spills its arc to successors. Weaknesses: keyspace ownership is implicit (no authoritative map, so clients can disagree during config rollout — brief split-brain caching, tolerable for a cache, fatal for a store), and load variance is ~±10% even with vnodes. Redis Cluster instead uses **16,384 fixed hash slots**: `slot = CRC16(key) mod 16384`, and an explicit slot→node assignment gossiped cluster-wide. Migration is per-slot and stateful (`MIGRATING`/`IMPORTING` flags; clients chase `-MOVED`/`-ASK` redirects), so resharding is precise, observable, and can be throttled. **Hash tags** (`{user123}.profile`, `{user123}.orders`) force related keys into one slot to permit multi-key ops/Lua — but a popular hash tag is a self-made hot slot. Interview line: *the ring gives you statistical placement with zero coordination; slots give you exact placement with a small coordination protocol — Redis chose slots so that resharding is an explicit operation, not an emergent behavior.*
+
+**Write-behind failure & durability handling.** Write-back's loss window deserves more than a hand-wave. Layered mitigations: (1) *don't buffer in bare memory* — deltas live in Redis with `appendfsync everysec` AOF plus a replica, so a primary crash loses ≤ 1 s, not the whole buffer; (2) *bound the buffer* — cap unflushed deltas per namespace (e.g., 5 s of writes or 100 MB); when the drainer falls behind the cap, degrade to write-through for new writes rather than growing the loss window silently; (3) *idempotent, ordered flush* — drainer reads deltas with a monotonically increasing epoch, upserts `applied_epoch` per key in the DB, and skips deltas ≤ applied epoch, so crash-and-retry never double-applies; (4) *reconciliation* — a nightly job compares DB aggregates against a recount from source events and emits drift metrics; write-back without reconciliation is slow silent corruption; (5) *upgrade path* — if the loss window ever becomes unacceptable, the namespace graduates from write-back to a real log (Kafka + consumer), which is write-behind with durability — say this to show you know where the pattern's ceiling is.
+
+**Cache coherence across regions.** Multi-region deployments add a third tier problem: each region has its own L1+L2, with a single-writer-region DB (or multi-master). Options: (1) **regional independence (chosen default)** — each region's cache fills from its local DB read replica; invalidations ride the same channel as DB replication via CDC — the invalidator in each region tails the *local* replica's stream, so invalidation ordering matches data arrival and you never invalidate before the new value is locally readable (invalidating off the primary's stream races replica lag: reader misses, loads the *old* value from the lagging replica, and caches it — a classic bug worth naming); (2) **global invalidation bus** — broadcast DELs cross-region over Kafka MirrorMaker or a global pub/sub; simpler mental model, but the race above bites unless deletes are delayed past max replica lag; (3) **lease-based** (Facebook's memcache paper): the cache hands a reader a lease token on miss; a DEL invalidates outstanding leases so a stale SET is refused — the strongest defense against the read-repopulate race, worth citing by name. Staleness across regions is bounded by replica lag + TTL; the budget per namespace decides whether cross-region reads must instead pin to the home region (checkout does; browsing doesn't).
+
+**Memcached slab allocation vs Redis memory model.** Memcached carves memory into 1 MB pages assigned to **slab classes** of fixed chunk sizes (~growth factor 1.25: 96 B, 120 B, 152 B…). A value occupies one chunk of the smallest fitting class — internal fragmentation is bounded and predictable (~20% worst case), allocation is O(1), there is no compaction, and LRU is *per slab class*. Failure mode: **slab calcification** — if traffic shifts from 100 B values to 1 KB values, pages already assigned to the small class aren't reclaimed and the 1 KB class evicts furiously while small-class memory idles (modern memcached's automover reassigns pages, but slowly). Redis instead uses a general-purpose allocator (jemalloc) with per-type encodings (listpack for small hashes, intset, embstr) — flexible, but subject to **external fragmentation**: `mem_fragmentation_ratio` = RSS / used_memory; healthy ~1.0–1.3; > 1.5 after churny workloads means the allocator holds pages it can't return — fix with `activedefrag yes` or a rolling restart. Also name the fork cost: RDB/AOF-rewrite forks copy-on-write the heap, so a write-heavy 32 GB instance can transiently need ~2× memory — a reason to prefer many medium nodes over few huge ones.
+
+**Monitoring & alerting, concretely.** Per namespace × tier, export: **hit ratio** (alert on *derivative*, not just level — a 95%→92% drop in 5 min is a leading indicator of a bad deploy or key-schema change, long before the DB pages); **eviction rate vs insert rate** (sustained evictions of keys younger than their TTL = under-capacity; Redis `evicted_keys` counter); **expired vs evicted** split (mostly-expired is healthy churn, mostly-evicted is memory pressure); **p50/p99 latency per tier** (L2 p99 creeping from 0.5→5 ms = big keys, slow Lua, or a saturated node's single thread); **memory**: `used_memory` vs `maxmemory` headroom and `mem_fragmentation_ratio`; **connections/ops per shard** to spot hot shards (max/median shard ops > 3× = hot-key or bad hash tag); **stampede telemetry**: lock acquisition failures, singleflight queue depth, stale-serves/s; **invalidation channel**: subscriber count (a server missing from the channel serves stale L1 silently) and publish→observe lag; **DB miss-path QPS** with an alert at the DB's provisioned shed threshold — this is the "cache is failing open" alarm. Dashboard rule of thumb: the top row answers *"is the DB about to die?"* (miss QPS, hit ratio), not cache vanity metrics.
+
 **Idempotency & retries.** Cache ops are naturally idempotent (SET/DEL), so client retries are safe. The dangerous retry is the *loader*: on lock-acquire timeout, losers must not stampede the DB — cap loader concurrency with a semaphore (e.g., ≤ 2× shard count) and prefer serving stale. Write-back drainer must flush idempotently: store deltas with a flush epoch, upsert `SET count = count + :delta WHERE epoch < :e` semantics, so a crash-and-retry doesn't double-count.
 
 **Backpressure.** If DB latency rises, misses queue behind singleflight latches; bound the wait (50 ms) and the inflight map size. If Redis latency rises, the client circuit-breaks per shard (rolling error rate > 50% → open for 5 s) and falls through to DB *with a concurrency limiter* — a fallen-open circuit without a limiter converts a cache brownout into a DB outage.
@@ -367,7 +381,81 @@ Note `BETA = 1.0` default; log of uniform(0,1] is negative, so the term pulls "n
 - **Clock skew:** TTLs are server-side in Redis (safe); L1 uses monotonic clock for expiry, never wall clock.
 - **Poisoned cache entry (bad deploy wrote garbage):** schema version in key namespace lets you bump `v3 → v4` and abandon the poisoned generation instantly — O(1) "flush" without touching Redis.
 
-**Metrics that must exist:** hit ratio per namespace per tier, p99 per tier, eviction rate vs insert rate (eviction ≫ insert churn = capacity problem), lock contention count, stale-served count, invalidation channel lag, top-K hot keys.
+### Reference tables for the deep dives above
+
+**Ring vs slots, side by side:**
+
+| Dimension | Consistent-hash ring (Ketama/memcached) | Redis Cluster slots |
+|---|---|---|
+| Placement function | `hash(key)` → first vnode clockwise | `CRC16(key) mod 16384` → slot → node map |
+| Ownership authority | Implicit — each client computes independently | Explicit slot map, gossiped; authoritative |
+| Rebalance granularity | Statistical (~1/N of keyspace per node change) | Exact, per-slot, throttleable |
+| Client disagreement window | Possible during config rollout (split-brain caching) | Resolved by `-MOVED`/`-ASK` redirects |
+| Multi-key operations | No affinity control | Hash tags `{...}` pin keys to one slot |
+| Load variance | ±10% even with 150 vnodes/node | Deterministic per slot; hot *slots* still possible |
+| Coordination cost | Zero | Gossip + slot-migration protocol |
+
+**Memcached slab classes vs Redis memory, side by side:**
+
+| | Memcached slabs | Redis (jemalloc) |
+|---|---|---|
+| Allocation unit | Fixed chunks per class (96 B, 120 B, … ×1.25) | Arbitrary; per-type encodings (listpack, embstr) |
+| Fragmentation type | Internal, bounded (~20% worst case) | External; watch `mem_fragmentation_ratio` |
+| Reclaim / compaction | None (page automover only) | `activedefrag`, or rolling restart |
+| Eviction scope | LRU per slab class | Global policy across keyspace (LRU/LFU sampling) |
+| Pathology | Slab calcification on size-mix shift | Fork copy-on-write spike during RDB/AOF rewrite |
+| Predictability | Very high — no allocator surprises | Good, but requires monitoring |
+
+**Warming technique selection:**
+
+| Scenario | Technique | Why |
+|---|---|---|
+| Single node replaced | Snapshot-seed from peer replica | Fastest to hot; staleness converges via TTL |
+| New cluster / region | Shadow traffic + hit-ratio admission gate | Realistic working set; no guessing top-K |
+| Post-flush (generation bump) | Replay top-K frequency log, rate-limited | Controlled DB load; hits the true hot set first |
+| App deploy (L1 cold) | Rolling deploy + boot-time priming of critical keys | Keeps aggregate L1 hit ratio smooth |
+
+**Cross-region invalidation sequence (regional-CDC option), step by step:**
+
+```
+1. Writer (region A, home region) commits UPDATE to primary DB.
+2. Primary streams the change to region B's read replica (lag: 50–500 ms).
+3. Region B's invalidator tails ITS OWN replica's CDC stream.
+4. Change becomes visible on B's replica  →  invalidator sees it  →  DELs
+   B's L2 key and publishes on B's L1 bus.
+5. Next read in B misses, loads the NEW value from B's replica (guaranteed
+   present — the CDC event and the row arrived on the same stream).
+```
+The invariant bought in step 3: *invalidation can never outrun the data it invalidates for*. A global bus breaks this — the DEL can arrive in B before replication does, and the repopulating read caches the old value for a full TTL.
+
+**Lease-based anti-stale-set (Facebook memcache), sketch:**
+
+```
+on GET miss(key):
+    lease_token = cache.miss_with_lease(key)     # cache remembers token
+    val = db.read(key)
+    cache.set_if_lease_valid(key, val, lease_token)  # refused if a DEL
+                                                     # invalidated the lease
+on WRITE(key):
+    db.write(key)
+    cache.delete(key)        # also invalidates all outstanding lease tokens
+```
+The lease closes the read-repopulate race exactly: any SET whose read began before the invalidating write is refused, because its token died with the DEL. Bonus: handing out one lease per key per interval is also stampede control — non-holders briefly wait or serve stale.
+
+**Metrics that must exist** (per namespace × tier):
+
+| Metric | Healthy | Alert condition | What it catches |
+|---|---|---|---|
+| Hit ratio | ≥ 95% hot namespaces | Drop > 3 pts in 10 min (derivative alert) | Bad deploy, key-schema change, bot scans |
+| Miss-path DB QPS | Under shed threshold | > 80% of DB provisioned ceiling | Cache failing open; the outage precursor |
+| Evicted vs expired split | Mostly expired | Evictions of keys younger than TTL | Under-capacity / memory pressure |
+| p99 per tier | L1 µs, L2 < 1 ms | L2 p99 > 5 ms | Big keys, hot shard, slow Lua |
+| `mem_fragmentation_ratio` | 1.0–1.3 | > 1.5 sustained | Allocator fragmentation → defrag/restart |
+| Max/median shard ops | < 2× | > 3× | Hot key or bad hash tag |
+| Singleflight queue depth, lock failures | ~0 | Sustained growth | Stampede forming; DB slowness |
+| Stale-serves/s | Low, bounded | Spike | Origin unhealthy; grace-mode active |
+| Invalidation subscriber count | = fleet size | Any shortfall | Server silently serving stale L1 |
+| Invalidation publish→observe lag | < 100 ms | > 1 s | Partition; L1 TTL becomes the only backstop |
 
 ## 8. Trade-off Summary & Interview Soundbites
 
@@ -382,6 +470,11 @@ Note `BETA = 1.0` default; log of uniform(0,1] is negative, so the term pulls "n
 | Write-back for counters only | Bounded loss window on crash, for 100× DB write reduction |
 | Redis over Memcached | Some throughput/memory efficiency, for structures, locks, pub/sub, replication |
 | Negative caching + Bloom filter | Memory + false positives, to defeat penetration attacks |
+| Slot-based sharding (Redis Cluster) over a bare ring | A coordination protocol to run, for exact, observable, throttleable resharding |
+| Regional caches fed by local CDC, not a global bus | Per-region invalidator infrastructure, to eliminate the replica-lag repopulate race |
+| Hit-ratio admission gate on cold nodes | Slower node turn-up, to prevent self-inflicted partial stampedes |
+| Bounded write-back buffer with degrade-to-write-through | Occasional write-latency spikes under drainer lag, for a hard cap on the loss window |
+| Short TTLs even on "static" data (≤ 24 h) | Some avoidable misses, for bounded staleness, compliance-friendly deletion, and forgotten-invalidation insurance |
 
 **Soundbites:**
 1. "The cache is an optimization, never a dependency — every failure mode must degrade to the database plus a load shedder, not to an outage."
@@ -391,6 +484,10 @@ Note `BETA = 1.0` default; log of uniform(0,1] is negative, so the term pulls "n
 5. "The hotter the key, the better L1 handles it — in-process caching is the only hot-key fix that gets *stronger* as the key gets hotter."
 6. "L1's short TTL is the correctness backstop, so the invalidation bus can be fast and lossy instead of durable and slow."
 7. "Schema version in the key is a free O(1) cache flush."
+8. "A cold cache node admitted to the pool is a stampede you scheduled yourself — gate admission on measured hit ratio."
+9. "In multi-region, invalidate off the local replica's CDC stream, not the primary's — otherwise you race replication lag and cache the value you just deleted."
+10. "Write-back without reconciliation is slow silent corruption; the nightly recount is part of the pattern, not an extra."
+11. "Alert on the derivative of hit ratio — by the time the absolute number looks bad, the database already knows."
 
 **Common follow-ups:**
 - *"Why not write-through everywhere?"* Couples every write's latency and availability to the cache, and warms keys nobody reads; reserve it for strict read-after-write namespaces.
@@ -399,3 +496,7 @@ Note `BETA = 1.0` default; log of uniform(0,1] is negative, so the term pulls "n
 - *"Redis Cluster vs client-side sharding vs proxy (Twemproxy/Envoy)?"* Cluster for built-in failover and slot migration; proxy when clients are polyglot and you want thin clients; client-side when you need per-key routing tricks (hot-key replication).
 - *"How would CDC-based invalidation work?"* Debezium tails the DB binlog, an invalidator service maps table rows → cache keys and issues DELs; removes reliance on app code remembering to invalidate, at the cost of an async pipeline (~100 ms lag).
 - *"What breaks first at 10× traffic?"* L2 egress bandwidth and hot shards — answer: raise L1 TTL/size, protobuf compression, hot-key replication, and more shards via slot rebalancing.
+- *"How do you cache paginated or filtered query results, not just entities?"* Two-level composition: cache the *ID list* per query signature (`q:{hash(filters,page)} → [id1..id20]`, short TTL 30–60 s) and hydrate each ID through the entity cache. One item edit invalidates only that entity; the list refreshes on its short TTL. Never cache fully rendered result pages for mutable data — invalidation fan-in is unbounded. If list freshness matters (inventory search), tag the list keys by the dominant filter dimension and use tag invalidation.
+- *"Your hit ratio dropped from 96% to 80% overnight — how do you debug it?"* Ordered checklist: (1) deploy diff — did a key schema/serialization change silently create a new namespace (v3→v4 bump doubles the working set)? (2) eviction metrics — did a new feature's keys blow the memory budget and evict the old hot set (evicted-young count)? (3) traffic mix — a bot/crawler scanning the long tail destroys LRU (fix: LFU or admission filter); (4) TTL regression — someone "fixed" staleness by dropping a TTL from 600 s to 5 s; (5) shard health — one shard flapping means 1/N of keyspace is effectively uncached. The metric that discriminates fastest is evictions-vs-expiries split plus per-namespace hit ratio, which is why both must pre-exist the incident.
+- *"When is it correct to NOT cache something?"* When any of these hold: read rate ≲ write rate (invalidation churn exceeds the benefit — the cache is mostly a delete stream); strict linearizability required (checkout inventory, auth token revocation checks — a stale allow is a security bug); values are huge and read once (bulk export); or the DB read is already ~sub-ms and the added cache hop, coherence machinery, and failure modes don't pay for themselves. Framing: caching buys latency and DB offload at the price of a *second system that can disagree with the first* — if the purchase price exceeds the benefit, decline.
+- *"How does caching interact with GDPR-style deletion?"* Explicit invalidation is now a compliance operation, not an optimization: on erasure, DEL all keys for the subject (tag index `tag:user:{id}` makes this tractable), purge L1 via the bus, and bound worst-case residency by max TTL — which becomes a documented compliance number. This is a strong argument for capping TTLs (≤ 24 h) even on "static" data, and for never caching personal data with no TTL.

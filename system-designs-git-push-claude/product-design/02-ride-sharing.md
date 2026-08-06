@@ -211,6 +211,25 @@ rpc DriverSession(stream DriverMsg) returns (stream ServerMsg)
 Trip state machine (server-enforced; illegal transitions rejected with 409):
 `REQUESTED -> DRIVER_ASSIGNED -> ARRIVED -> IN_PROGRESS -> COMPLETED`; `CANCELLED` reachable from REQUESTED/DRIVER_ASSIGNED/ARRIVED (with cancellation-fee rules per state); transitions written with `UPDATE ... WHERE trip_id=? AND status=<expected> AND version=?`.
 
+### Trip state machine — full transition table
+
+| From | Event | To | Actor | Side effects | Guard / notes |
+|---|---|---|---|---|---|
+| (none) | POST /rides | REQUESTED | Rider | Insert trip row; enqueue to matching | Idempotency-Key dedup; quote must be unexpired |
+| REQUESTED | driver accepts offer | DRIVER_ASSIGNED | Driver (via dispatch) | Persist driver_id, assigned_at; notify rider; start driver->pickup ETA stream | Offer must still be OFFERED (offer_id version check) |
+| REQUESTED | no supply / rings exhausted | CANCELLED | System | Notify rider "no drivers"; no fee | Terminal |
+| REQUESTED | rider cancels | CANCELLED | Rider | No fee | Terminal |
+| DRIVER_ASSIGNED | driver taps "arrived" | ARRIVED | Driver | arrived_at; notify rider; start wait timer | Optional geofence check: driver within ~100m of pickup |
+| DRIVER_ASSIGNED | rider cancels | CANCELLED | Rider | Fee if past free-cancel window (e.g., 2 min post-assign); release driver | Driver `release()`; driver re-enters geo index |
+| DRIVER_ASSIGNED | driver cancels | REQUESTED | Driver | Strike on driver; trip re-enters matching with prior candidates excluded | Re-dispatch, not terminal — rider shouldn't re-request |
+| ARRIVED | driver starts trip | IN_PROGRESS | Driver | started_at; begin metered fare accumulation; stop wait timer | Optional: rider-side PIN confirms right passenger |
+| ARRIVED | rider no-show timeout | CANCELLED | System/Driver | No-show fee to rider; release driver | Wait timer (e.g., 5 min) authoritative on server |
+| IN_PROGRESS | driver ends trip | COMPLETED | Driver | ended_at; compute final fare (metered km/min x rates x locked surge); outbox event -> payment capture | Geofence sanity vs. dropoff; large deviation flags for review |
+| IN_PROGRESS | (any cancel attempt) | — rejected 409 | — | — | In-progress trips end, they don't cancel; disputes are post-trip refunds |
+| COMPLETED / CANCELLED | any | — rejected 409 | — | — | Terminal states are immutable; corrections are compensating records |
+
+Every transition is a single conditional UPDATE (`status=<expected> AND version=?`), so a stale actor (duplicate tap, delayed packet) loses the version check and gets a 409 with the current state in the body — clients reconcile by re-fetching, never by retrying the transition blindly. Timestamps per state double as the audit log and feed cancellation-fee and driver-incentive logic.
+
 ## 6. Low-Level Design (LLD)
 
 ```mermaid
@@ -310,6 +329,63 @@ classDiagram
 
 `Product.computeFare`: `fare = getBaseRate() + km * getPerKmRate() + min * getPerMinRate()`, then `* surgeMultiplier`, floor at product minimum. Subclasses only override the three rate getters (Template Method flavor on top of the hierarchy).
 
+### LLD walkthrough — the classic machine-coding UML, end to end
+
+Call flow for `requestRide`:
+1. `RideService.requestRide(riderId, pickup, dropoff, product)` validates the quote (via `FareRepository.getQuote` — expired quote means re-quote, not silent re-price), creates a `Ride` in `REQUESTED` through `RideRepository.save`.
+2. `assignDriver(rideId)` pulls candidates from `GeoIndex` (k-ring), hands the list to the injected `DriverMatchingStrategy.pickDriver`, and claims via `Driver.tryClaim()` — the CAS loop from the pseudocode below.
+3. On COMPLETED, `FareEstimationService` computes the final fare: `product.computeFare(km, min, surge)` where `surge` came from `PricingStrategy.surgeMultiplier(pickup, requestTime)` *frozen at quote time* — completion never re-reads live surge.
+
+Concrete strategy implementations (each ~5 lines — the point is the seam, not the code):
+
+```java
+class NearestDriverStrategy implements DriverMatchingStrategy {
+    public Driver pickDriver(List<Driver> c, Location pickup) {
+        return c.stream().min(comparingDouble(d -> haversine(d.location(), pickup))).orElseThrow();
+    }
+}
+class HighestRatedDriverStrategy implements DriverMatchingStrategy {
+    public Driver pickDriver(List<Driver> c, Location pickup) {
+        return c.stream().max(comparingDouble(Driver::rating)).orElseThrow();
+    }
+}
+```
+
+Product hierarchy is pure data variation — three getters per subclass, formula lives once in the abstract parent:
+
+| Product | getBaseRate() | getPerKmRate() | getPerMinRate() | Notes |
+|---|---|---|---|---|
+| UberX | 50.0 | 12.0 | 2.0 | Sedan, default |
+| UberGo | 40.0 | 10.0 | 1.5 | Hatchback, budget |
+| UberAuto | 20.0 | 8.0 | 1.0 | Rickshaw, min-fare floor matters most here |
+
+Adding UberXL or UberMoto is one subclass + registry entry; `computeFare` and every service are untouched — the interviewer is checking you *don't* write `if (product == UBERX)` ladders.
+
+`FareRepository` with the TTL quote cache and background cleaner — the piece most candidates hand-wave:
+
+```java
+class FareRepository {
+    private final ConcurrentHashMap<String, TimestampedQuote> cache = new ConcurrentHashMap<>();
+    private static final Duration TTL = Duration.ofMinutes(2);
+    private final ScheduledExecutorService cleaner = Executors.newSingleThreadScheduledExecutor();
+
+    FareRepository() {  // sweep expired quotes every 30s so the map doesn't grow unbounded
+        cleaner.scheduleAtFixedRate(
+            () -> cache.entrySet().removeIf(e -> e.getValue().isExpired(TTL)), 30, 30, SECONDS);
+    }
+    void saveQuote(FareQuote q)            { cache.put(q.id(), new TimestampedQuote(q, Instant.now())); }
+    Optional<FareQuote> getQuote(String id) {
+        TimestampedQuote t = cache.get(id);
+        if (t == null || t.isExpired(TTL)) { cache.remove(id); return Optional.empty(); }  // lazy expiry on read
+        return Optional.of(t.quote());
+    }
+}
+```
+
+Two-layer expiry is deliberate: the read path checks staleness itself (correctness — a quote must never be honored past TTL even if the sweeper is behind), while the scheduled sweep is purely for memory hygiene. `ConcurrentHashMap.removeIf` inside the sweeper is safe under concurrent puts; no global lock. In the distributed version this whole class becomes `SETEX quote:{id}` in Redis and the cleaner disappears — say that migration out loud, it shows the repository seam paying off.
+
+Why `AtomicBoolean` and specifically `compareAndSet` prevents double-dispatch: with a plain `boolean` + `if (d.isAvailable()) { d.setAvailable(false); assign(d); }`, two matcher threads can both pass the `if` before either writes — classic TOCTOU, and both riders get the same car. `compareAndSet(true, false)` compiles to a single hardware CAS (lock cmpxchg on x86): the read-compare-write is one indivisible step, so exactly one thread observes `true -> false` succeed and the other gets `false` back *as a return value it can act on* — fall through to the next candidate, no blocking, no lock ordering to get wrong, no deadlock possible. `synchronized` on the driver would also be correct but serializes all claims on that driver and invites lock-held-across-IO bugs when the offer RPC creeps inside the critical section; CAS keeps the critical section to one instruction.
+
 ### Why these patterns
 
 **Strategy for matching and pricing.** Matching policy is a product decision that changes without redeploying dispatch: nearest-driver for latency, highest-rated for premium products, later an ML-ranked strategy — each is one new class implementing `pickDriver`, selected at runtime (per product, per city, per experiment arm). Open-closed: `RideService` never changes when policy does. Same argument for `PricingStrategy`: `LocationBasedPricingStrategy` reads live surge cells; `NightBasedPricingStrategy` applies a time-of-day multiplier; both are just `surgeMultiplier()` hooks composed into the same fare formula. Also the single best testability win: inject a deterministic stub strategy in tests.
@@ -377,7 +453,17 @@ Key properties: ring-by-ring expansion bounds work and preserves "nearest first"
 
 **Regional failover.** Regions are largely independent (a city's drivers, riders, geo index live together). Trips DB: per-region primary with cross-region async replica; on region loss, promote replica — in-flight trips may lose the last seconds of state, reconciled from client-side trip logs on reconnect. Geo index needs no failover replication: it rebuilds from the ping stream in one 4s cycle after gateways re-route (DNS/anycast) to the standby region. This "state that self-heals from the stream" property is the payoff of not making locations durable.
 
-**ETA computation (follow-up magnet).** Two ETAs: driver->pickup (shown during matching, feeds strategy ranking) and trip ETA. Base: routing engine (contraction hierarchies / CH or CRP over the road graph) gives shortest-time path in ms. Real-time correction: live speeds per road segment aggregated from the driver ping firehose (Kafka consumer bucketing pings onto map-matched segments, 1-5 min windows). ML layer on top (Uber's DeepETA): predicts residual between graph ETA and actual, using features like time-of-day, weather, driver behavior. For matching, don't run full routing per candidate — use haversine-with-penalty for ring filtering, exact routing only for the top ~5.
+**ETA computation (follow-up magnet).** Two ETAs: driver->pickup (shown during matching, feeds strategy ranking) and trip ETA. The pipeline has three layers:
+
+1. *Map-matching.* Raw GPS is noisy (5-30m error, worse in urban canyons); a ping rarely lies exactly on a road. Map-matching snaps the ping sequence onto the road graph — standard approach is an HMM/Viterbi: hidden states are candidate road segments near each ping, emission probability decays with snap distance, transition probability penalizes implausible jumps (route distance between consecutive candidates vs. straight-line). Output: a clean sequence of (segment, timestamp) — the substrate for both live speeds and billing-grade trip distance (odometer from raw GPS overbills in tunnels and canyons).
+2. *Routing graph + contraction hierarchies.* The road network is a directed graph: nodes = intersections, edges = segments weighted by expected traversal time (not distance). Dijkstra/A* on a continental graph (~100M edges) is tens of ms — too slow at dispatch QPS. Contraction hierarchies preprocess the graph: rank nodes by "importance", contract them bottom-up, inserting shortcut edges that preserve shortest-path distances through removed nodes. Queries become a bidirectional search that only goes *upward* in the hierarchy from both ends and meets in the middle — microseconds to low-ms per query, at the cost of hours of preprocessing. The catch: edge weights baked at preprocess time. That's why production systems use CRP/customizable variants — partition the graph (metric-independent, done once), then re-"customize" cell-level shortcut costs with fresh traffic weights every few minutes, keeping queries fast *and* traffic-aware.
+3. *Live speeds + ML residual.* A Kafka consumer aggregates map-matched pings into per-segment speed estimates over 1-5 min windows (the driver fleet is a free probe network); these feed the customization layer. On top, an ML model (Uber's DeepETA) predicts the residual between graph ETA and observed arrival using time-of-day, weather, pickup/dropoff type, driver behavior — the graph gets you within ~10-20%, the residual model halves that.
+
+For matching, never run full routing per candidate: haversine x a regional detour coefficient (~1.2-1.4) filters the ring, exact CH routing only for the top ~5 finalists.
+
+**Surge pricing mechanics (deep dive).** Per H3 res-8 cell, two signals: *demand rate* = ride requests + fare-quote opens (eyeballs, a leading indicator) over a sliding 2-5 min window; *effective supply* = available drivers in the cell k-ring, discounted for drivers currently holding offers or finishing nearby trips (they're supply-in-30s). Raw ratio `d/s` is far too jumpy to price on — a cell with 3 drivers flips from 1.0x to 3.0x when one logs off. So the pipeline is: (a) EWMA-smooth both signals; (b) map ratio -> multiplier through a step function (1.0, 1.2, 1.5, ... capped) rather than a continuous curve, so prices are legible; (c) hysteresis — the threshold to *drop* a surge level sits below the threshold that raised it, killing oscillation at a boundary; (d) rate-limit steps (one level per update tick, no 1.0 -> 3.0 jumps); (e) spatial smoothing across the k-ring so adjacent cells don't show 1.0x vs 2.5x across a street — that teaches riders to walk a block to dodge surge and puts a cliff in driver earnings. Published cell->multiplier snapshots go to a cache read at quote time; the quote freezes its multiplier for the quote TTL. Closing the loop: surge is also a *supply* signal — driver apps render the surge heatmap, so the multiplier both throttles demand and attracts supply, which is why it must decay smoothly as drivers converge (hysteresis again, in reverse).
+
+**Payments integration.** Never charge inline in the trip path. Flow: (1) at request time, optionally place a pre-auth hold for the quoted fare (fraud posture per market); (2) on COMPLETED, the trip transition and a `payment_intent` row (amount = final fare, status=PENDING, idempotency key = trip_id) commit in one DB transaction, plus an outbox event; (3) a payment worker consumes the outbox, calls the PSP (Stripe/Adyen/Braintree) with the trip-scoped idempotency key — retries and duplicate deliveries collapse into one charge; (4) webhook from the PSP flips the intent to CAPTURED/FAILED; (5) failure path: retry with backoff across the stored payment methods, then mark trip in arrears (collect on next ride) — the trip stays COMPLETED; money state is deliberately decoupled from trip state. Ledger discipline: every money movement is an append-only double-entry record (rider charge, driver earning, platform fee, tolls, tips); refunds and adjustments are compensating entries, never mutations. Driver payouts batch from the earnings ledger (daily/weekly, or instant-pay against accrued balance for a fee) — completely offline from dispatch. PCI scope stays at the edge: apps tokenize cards directly with the PSP; your systems store tokens only.
 
 ## 8. Trade-off Summary & Interview Soundbites
 
@@ -401,6 +487,8 @@ Key properties: ring-by-ring expansion bounds work and preserves "nearest first"
 6. "Surge is a control system, not just pricing: it's the demand valve that protects dispatch from thundering herds and moves supply toward heat."
 7. "Idempotency keys on ride creation and payment capture: one tap in a tunnel must never mean two cars or two charges."
 8. "The geo index needs no failover replication — it self-heals from the ping stream in one 4-second cycle. Choosing what NOT to persist is a design decision."
+9. "Contraction hierarchies trade hours of preprocessing for microsecond routing queries; CRP re-customizes cell costs every few minutes so the shortcuts stay traffic-aware."
+10. "Trip state and money state are deliberately decoupled: COMPLETED plus an outbox row in one transaction, and the PSP idempotency key makes every retry a no-op."
 
 ### Common follow-ups
 - **How does ETA work?** Road-graph routing (contraction hierarchies) for the base estimate, corrected with live per-segment speeds aggregated from the driver ping firehose, plus an ML residual model (DeepETA-style). Matching uses cheap haversine for filtering, exact routing only for finalists.
@@ -409,3 +497,7 @@ Key properties: ring-by-ring expansion bounds work and preserves "nearest first"
 - **Two riders match the same driver?** Impossible past the claim: candidate selection is racy by design, but the claim is CAS — exactly one winner; the loser falls through to the next candidate in the same loop.
 - **Driver goes offline mid-trip?** Availability derives from trip state, not connection state; the trip stays IN_PROGRESS, the app buffers pings and trip events locally, reconciles on reconnect. Only pre-assignment drivers are evicted by the location TTL.
 - **How do you scale matching for one city?** Pin a city (or coarse H3 cell) to one dispatcher shard so claims stay in-process; split hot cities by sub-cell; airports get a FIFO virtual queue instead of proximity matching.
+- **How would you do scheduled rides?** They're not dispatched at booking time — store as a future intent, and a scheduler materializes a normal ride request T-minus-lead-time before pickup (lead time = predicted driver->pickup ETA + buffer for that cell/time). The only new machinery is the timer service and a supply-forecast check at booking so you don't promise a 5 AM airport ride in a dead zone; everything downstream reuses the standard matching path.
+- **How does pool/shared rides change matching?** It becomes an online vehicle-routing problem: a candidate driver may already carry a rider, so scoring a match means inserting the new pickup+dropoff into the existing route and pricing the *detour* imposed on current passengers (bounded by product promise, e.g., +8 min max). Practical shape: keep the same k-ring candidate generation, but the strategy scores insertions via the ETA service (pairwise route deltas), and claims lock a *seat*, not the driver. Batch matching (accumulate requests for 2-5s, solve a small assignment problem per cell) beats greedy per-request matching noticeably here — mention Uber's shift to batched global matching.
+- **Where do you rate-limit, and on what key?** Three tiers: per-device/rider at the API gateway (token bucket, protects against buggy clients and card-testing fraud); per-cell request admission at dispatch (protects the matcher during stampedes — degrade to queued-with-ETA, not 429); per-driver ping rate at the connection gateway (a hacked client streaming 100 pings/s gets throttled at the socket, protecting Kafka). Keys differ per tier because the resource being protected differs — saying that is the senior answer.
+- **How do riders see the driver approaching in real time?** Rider app holds a lightweight subscription (SSE/WebSocket via the API tier, or short-poll at 3-5s) keyed by trip_id; the trip service subscribes to the assigned driver's ping stream (filtered from the Kafka firehose or forwarded by the gateway) and relays snapped, map-matched positions — never raw GPS, which jitters across buildings. Fan-out is 1:1 (one rider per driver), so this is trivial compared to the ingest side; interpolate client-side between updates for smooth animation.

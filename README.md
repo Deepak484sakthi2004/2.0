@@ -1,3 +1,17 @@
+# Interview Prep Monorepo — Backend / System Design (SDE2 → Senior)
+
+Three self-contained study tracks. Pick based on where you are:
+
+| Track | What it is | Best for |
+|---|---|---|
+| [63-Lesson System Design Curriculum](system_design_curriculum_63_lessons/README.md) | Day-by-day course: 28 foundation lessons + 35 Socratic design sessions with graded questions | Learning from first principles, daily structure |
+| [27 System Design Deep-Dives](system-designs-git-push-claude/README.md) | Interview-shaped docs: brute force → evolved architecture, protocol trade-offs, Mermaid HLD + machine-coding LLD | L5/Senior loop prep at Google / Meta / Microsoft |
+| [Atlassian Backend SDE2 Prep Book](#the-atlassian-backend-sde-2-prep-book) | 28 days × 7 hours: Java concurrency, LLD, system design, mocks | Targeted Atlassian (or similar backend) loop |
+
+**Suggested order if starting cold:** curriculum phase 1 (foundations) → deep-dives for the designs your target company asks → curriculum phase 2 lessons as mock quizzes → company-specific book.
+
+---
+
 # The Atlassian Backend SDE 2 Prep Book
 
 **28 days · 7 hours a day · 196 hours. One self-contained study source.**

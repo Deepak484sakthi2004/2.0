@@ -86,6 +86,15 @@ Naive #2 — a database table as a queue (`SELECT ... WHERE status='pending' FOR
 
 Key interview line: Kafka's "exactly-once" (EOS) is exactly-once *stream processing within Kafka*; the moment a consumer calls an external API or writes a non-transactional store, you're back to needing idempotency at the sink.
 
+Decision checklist to run per topic (say it as a drill, not a debate):
+
+1. Can the business tolerate losing this message? Yes → at-most-once is on the table (metrics only).
+2. Is the sink a single transactional DB you control? Yes → store offsets in the sink transaction (strongest, cheapest exactly-once).
+3. Is the sink another Kafka topic? Yes → idempotent producer + transactions (Kafka EOS applies).
+4. Is the sink an external API? → at-least-once + pass `message_id` as the provider's idempotency key; if the provider has none, wrap the call in a local dedupe check-then-call with a claim row (accept the tiny crash window between call and record, and reconcile).
+5. Does processing have a natural idempotent form (`SET status=X`, version-gated apply)? Prefer it over a dedupe table — no storage, no pruning, no horizon bugs.
+6. Whatever you picked: verify the dedupe horizon ≥ max redelivery horizon (retention + DLQ redrive window), or the guarantee is fiction.
+
 ### Offset commit strategy
 
 | Strategy | Behavior on crash | Verdict |
@@ -185,6 +194,48 @@ Patterns: **Strategy** (RetryPolicy, PartitionStrategy), **Template Method** (Co
 
 ```mermaid
 classDiagram
+    class Producer~T~ {
+        <<interface>>
+        +send(String topic, String key, Message~T~ msg) Future~Ack~
+        +sendTransactional(List~Message~ batch)
+        +flush()
+        +close()
+    }
+    class KafkaProducerAdapter~T~ {
+        -KafkaProducer delegate
+        -PartitionStrategy partitioner
+        -DeliverySemantics semantics
+        +send(topic, key, msg) Future~Ack~
+    }
+    class Consumer~T~ {
+        <<interface>>
+        +subscribe(List~String~ topics)
+        +poll(Duration timeout) List~Message~T~~
+        +pause(Set~TopicPartition~ tps)
+        +resume(Set~TopicPartition~ tps)
+        +close()
+    }
+    class KafkaConsumerAdapter~T~ {
+        -KafkaConsumer delegate
+        -OffsetStore offsets
+    }
+    class OffsetStore {
+        <<interface>>
+        +committed(TopicPartition tp) long
+        +commit(Map~TopicPartition,long~ offsets)
+        +commitInTx(Map offsets, TxContext tx)
+    }
+    class KafkaOffsetStore
+    class SinkDbOffsetStore {
+        -DataSource db
+    }
+    class DeliverySemantics {
+        <<enumeration>>
+        AT_MOST_ONCE
+        AT_LEAST_ONCE
+        EXACTLY_ONCE_KAFKA
+        EFFECTIVELY_ONCE_E2E
+    }
     class MessageHandler~T~ {
         <<interface>>
         +handle(Message~T~ msg)
@@ -245,6 +296,15 @@ classDiagram
     class ConsumerFactory {
         +build(TopicConfig cfg) ConsumerWorker
     }
+    Producer <|.. KafkaProducerAdapter
+    Consumer <|.. KafkaConsumerAdapter
+    OffsetStore <|.. KafkaOffsetStore
+    OffsetStore <|.. SinkDbOffsetStore
+    KafkaProducerAdapter o-- PartitionStrategy
+    KafkaProducerAdapter ..> DeliverySemantics : configured by
+    KafkaConsumerAdapter o-- OffsetStore
+    ConsumerWorker o-- Consumer : polls via
+    OutboxRelay o-- Producer : publishes via
     MessageHandler <|.. IdempotencyDecorator
     MessageHandler <|.. PaymentHandler
     IdempotencyDecorator o-- MessageHandler : wraps
@@ -259,7 +319,7 @@ classDiagram
     ConsumerFactory ..> ConsumerWorker : creates
 ```
 
-Why: Decorator keeps idempotency orthogonal to business logic (every handler gets it by construction, none can forget it); Strategy makes backoff policy per-topic config, not code; Repository isolates the dedupe store so it can be Postgres today, Redis-with-TTL tomorrow.
+Why: Decorator keeps idempotency orthogonal to business logic (every handler gets it by construction, none can forget it); Strategy makes backoff policy per-topic config, not code; Repository isolates the dedupe store so it can be Postgres today, Redis-with-TTL tomorrow. The `Producer`/`Consumer` interfaces are **Adapter** seams: business code never imports Kafka client types, so unit tests run against an in-memory broker fake and a future broker migration (or an SQS-backed low-volume topic) is a wiring change, not a rewrite. `OffsetStore` is abstracted for one specific reason: the exactly-once-into-a-DB pattern stores offsets *in the sink database transaction* (`SinkDbOffsetStore.commitInTx`) — on restart the consumer seeks to the DB's offset rather than Kafka's, making "process + record position" atomic. `DeliverySemantics` as an explicit enum on the producer config forces every topic owner to declare their contract in code review rather than inheriting whatever the client library defaults to.
 
 ### Hardest algorithm — consumer loop with dedupe, backoff, retry-tiers, DLQ
 ```java
@@ -306,13 +366,81 @@ Interview notes: (1) **full jitter** prevents synchronized retry waves — with 
 
 **Ordering edge cases.** Per-partition ordering breaks when: producer retries with `max.in.flight > 1` without idempotence (batch 2 succeeds, batch 1 retries → reordered — fixed by `enable.idempotence=true` which allows 5 in-flight *with* ordering); a message detours through retry topics (its siblings pass it — mitigate with per-entity version checks in handlers, or park *all* subsequent messages for that key — expensive, usually version-check wins); partition count changes (key→partition mapping shifts; drain-then-switch or over-provision from day one).
 
+**On-disk log layout — why Kafka is fast (worth 60 seconds in any deep dive).** A partition is a directory of **segments**:
+
+```
+orders-7/
+  00000000000000000000.log      # append-only record batches
+  00000000000000000000.index    # sparse offset → file-position index
+  00000000000000000000.timeindex# timestamp → offset (powers offsetsForTimes,
+                                #   i.e., "replay from 3 days ago")
+  00000000000123456789.log      # rolled at segment.bytes (1 GB) or segment.ms
+  ...
+```
+
+Mechanics to narrate: appends are **sequential writes into page cache** (no per-message fsync); consumers reading near the tail are served *from page cache* — a healthy cluster does almost no read disk I/O; the offset index is sparse (one entry per ~4 KB), so a seek is: binary-search index → jump to file position → scan forward. Delivery to consumers uses **zero-copy** (`sendfile`: page cache → NIC without entering user space) — unless TLS or broker-side decompression forces a copy, which is why produce-side compression with pass-through matters. Retention (`retention.ms`) and compaction operate on whole segments — deleting old data is `rm` on a file, O(1), which is why 7-day retention at 130 TB is operationally boring. This is the answer to "why is a disk-based log faster than an in-memory queue?": sequential + batched + zero-copy beats random + per-message + copied, and the OS page cache *is* the memory tier.
+
+**Metrics that must exist:** consumer lag per group/partition and **backlog age** (lag ÷ consume rate, alarmed against retention); produce p99 and error rate by error type (`NotEnoughReplicas` spikes = ISR shrink); under-replicated partitions (the single best broker-health signal — nonzero and rising = a broker is falling behind); ISR shrink/expand rate (flapping = network or GC trouble); rebalance frequency per group; DLQ inflow rate; end-to-end pipeline latency via a heartbeat/tracer message published every second and timed at each consumer (measures the *pipeline*, not just Kafka).
+
 **Consumer lag & backpressure.** Lag = latest offset − committed offset, the single most important health metric. Runbook: lag rising + consumer CPU low ⇒ downstream (DB) is the bottleneck — scale that, not consumers. Lag rising + consumers maxed ⇒ scale group (up to partition count). Backlog age approaching retention ⇒ data-loss risk: raise retention now, then fix throughput. Broker itself never buffers in memory per-consumer (log is on disk) — this is why slow consumers are safe in Kafka but dangerous in RabbitMQ (unbounded queue growth in RAM until flow-control kicks in / node falls over).
+
+**Kafka replication internals — ISR, high watermark, acks, unclean election.** Each partition has a leader and followers; the **ISR** (in-sync replica set) is the leader plus followers within `replica.lag.time.max.ms` (default 30 s) of the log end. The **high watermark (HW)** is the minimum log-end offset across the ISR; consumers can only read up to HW — records past it are appended-but-uncommitted and invisible. `acks=all` means the leader acks after every *current ISR member* has the record — crucially, combined with `min.insync.replicas=2`: if the ISR shrinks to just the leader, produces are rejected (`NotEnoughReplicasException`) instead of `acks=all` silently degenerating to `acks=1` — that pairing is the actual durability guarantee, and interviewers probe exactly this: *`acks=all` alone guarantees nothing if the ISR can shrink to one*. On leader failure the controller elects a new leader **from the ISR**, so no acked record is lost. `unclean.leader.election.enable=false` forbids electing an out-of-sync replica when the whole ISR is gone: the partition goes offline (unavailable) rather than resurrecting with a truncated log — CP over AP on that partition; setting it `true` is a business decision to prefer availability and accept silent loss (defensible for clickstream, never for orders). Followers that recover truncate their log to the leader's (leader-epoch fencing prevents the old "truncate to HW" divergence bugs of pre-0.11 Kafka).
+
+**Produce-request lifecycle under `acks=all` (narrate this end to end):**
+
+```
+1. App calls send() → record enters the producer's in-memory accumulator,
+   batched per partition (linger.ms=5, batch.size=64KB), compressed (zstd).
+2. Sender thread picks full/expired batches, attaches (PID, epoch, seq),
+   sends ProduceRequest to the partition leader.
+3. Leader validates the sequence number (idempotence dedupe/reorder check),
+   appends to its local log (page cache; fsync policy is flush-by-OS —
+   durability comes from replication, not fsync).
+4. Followers in the ISR fetch-replicate the records (they pull, like
+   consumers); each append advances that follower's log-end offset.
+5. Leader advances the high watermark to min(ISR log-end offsets); once
+   HW covers the batch AND ISR ≥ min.insync.replicas, the leader responds.
+6. Producer receives the ack; on retriable error it resends the SAME
+   (PID, seq) — broker dedupes, so retries cannot duplicate or reorder.
+7. Consumers may now see the records (reads capped at HW;
+   read_committed additionally capped at LSO).
+```
+The two facts interviewers fish for: Kafka's durability is *replication-based, not fsync-based* (a power loss across the whole rack can lose page-cache data on all replicas — hence rack-aware replica placement), and the HW advance in step 5 is what makes "acked ⇒ survives one broker loss" true.
+
+**Exactly-once mechanics, one level deeper.** Two independent machines: (1) **Idempotent producer** — broker assigns a Producer ID (PID); every batch carries `(PID, epoch, sequence)` per partition; the broker accepts only the next expected sequence, silently deduping retried batches and rejecting reordered ones — this is what makes `max.in.flight=5` safe and is free (on by default in Kafka ≥ 3.0); it deduplicates *retries within a producer session*, nothing more. (2) **Transactions** — producer declares a `transactional.id`; a transaction coordinator (backed by the `__transaction_state` topic) tracks a two-phase protocol: `beginTxn` → produce to N partitions → `sendOffsetsToTransaction` (the consumed offsets join the same transaction — this is the read-process-write atomicity) → `commitTxn` writes commit markers into each partition. `read_committed` consumers buffer past the **LSO** (last stable offset) and skip aborted records. The `transactional.id` also provides **zombie fencing**: a restarted producer bumps the epoch, and the coordinator rejects the old instance's late commits. Costs to name: coordinator round trips per commit (batch transactions to ~100 ms windows), consumer latency floor = transaction commit interval, and the guarantee's boundary — the moment the "write" is an external HTTP call, transactions can't help; only sink-side idempotency can.
+
+**Consumer rebalancing protocols — eager vs cooperative, precisely.**
+
+| | Eager (range/round-robin assignors) | Cooperative sticky (`CooperativeStickyAssignor`) |
+|---|---|---|
+| On any membership change | **Every** consumer revokes **all** partitions, rejoins, gets a fresh assignment | Two-phase: only partitions that must *move* are revoked; the rest keep processing |
+| Pause duration | Full stop-the-world for the whole group (seconds to minutes on big groups) | Proportional to moved partitions only |
+| Stickiness | None (range) / accidental | Deliberate — minimizes movement, preserves warm state (local caches, DB connections) |
+| Duplicate window | Large — all in-flight batches interrupted | Small — only moved partitions' in-flight work |
+| Protocol | Single join/sync round | Two rebalance rounds (revoke-then-assign), converges incrementally |
+
+Add **static membership** (`group.instance.id=pod-name`): the coordinator remembers the instance across restarts within `session.timeout.ms`, so a rolling pod restart triggers zero rebalances — the returning pod just resumes its old assignment. KIP-848 (the next-gen consumer protocol) moves assignment computation broker-side and makes rebalancing fully incremental without a group-wide barrier — worth name-dropping as the direction of travel. Tuning triangle to recite: `session.timeout.ms` (liveness detection, heartbeat-thread based), `max.poll.interval.ms` (processing liveness — exceeded ⇒ proactive leave), `heartbeat.interval.ms` (≈ ⅓ of session timeout); confusing the first two is the most common consumer-ops bug.
 
 **Rebalance storms.** Symptom: group loops join/leave, no progress. Causes: processing a batch exceeds `max.poll.interval.ms` (coordinator assumes death — lower `max.poll.records` or raise interval); GC pauses exceed `session.timeout.ms`; flapping pods. Fixes: cooperative-sticky assignor (only moved partitions stop), static membership (restart ≠ leave), health-check-before-join deploys.
 
 **Hot partitions.** `hash(merchant_id)` when one merchant is 30% of traffic ⇒ one partition at 30% of topic load. Fixes: composite key `merchant_id + order_id` when merchant-level ordering isn't actually required (interrogate the ordering requirement — it's usually per-order, not per-merchant); or two-tier topics (whales get a dedicated topic).
 
 **Poison message anatomy.** Distinguish: *transient* (downstream timeout — retry), *permanent* (unparseable — straight to DLQ), *wedged* (handler infinite-loops/OOMs — needs processing timeout wrapper + circuit). DLQ hygiene: alert on DLQ rate (a DLQ nobody watches is a data-loss device with extra steps), store original topic/partition/offset/exception in headers, redrive tool replays to the original topic *with the original message_id* so dedupe still protects double-redrive.
+
+**Poison pills at the deserialization layer.** The nastiest poison pill fails *before* your handler runs: `poll()` itself throws on an undeserializable record, and a naive loop crashes, restarts, seeks to the same offset, and crash-loops forever — the partition is wedged and so is the pod. Defenses in order: (1) consume as `byte[]` and deserialize inside your own try/catch (the design above does this via `codec.decode` — say so); (2) if using framework deserializers, wrap them (Spring's `ErrorHandlingDeserializer` pattern): failures surface as a typed error record routed to DLQ instead of an exception in `poll()`; (3) an OOM-class pill (a 50 MB record that kills the JVM on decode) needs `fetch.max.bytes`/`max.partition.fetch.bytes` caps and a max-record guard before allocation; (4) last-resort operational tool: a "skip offset" runbook (seek past the wedged offset after copying the raw bytes to the DLQ manually). Test for it explicitly — inject a garbage record in staging chaos tests; most teams discover this failure mode in production.
+
+**Priority-queue emulation on Kafka.** Kafka has no per-message priority — the log is FIFO per partition, full stop. Patterns, weakest to strongest: (1) **priority topics** — `orders.p0` / `orders.p1` / `orders.p2`, consumers poll p0 first and only drain p1/p2 when p0 is empty (or with weighted budgets, e.g., 70/20/10 per poll cycle to prevent p2 starvation); simple, coarse, the right default; (2) **dedicated consumer capacity** — same topics, but separately scaled consumer groups per tier, so a p2 backlog can never consume p0's capacity (stronger isolation, more infra); (3) **broker swap for the priority slice** — route the genuinely latency-critical minority (say < 1% of traffic) through RabbitMQ priority queues or SQS with separate queues while the bulk stays on Kafka — heterogeneous, but honest about tool fit. Anti-pattern to call out: single topic with a priority header and consumers that re-sort in memory — it breaks offset semantics (you can't commit past messages you deferred) and rebuilds a priority queue in the worst possible place. Also note the requirement smell: "priority" often really means *"the backlog shouldn't delay urgent work"* — which tiered topics solve — not per-message preemption.
+
+**Schema registry & compatibility, concretely.** The registry stores versioned schemas per *subject* (typically `<topic>-value`); producers register/resolve a schema ID and prepend it to each payload (magic byte + 4-byte ID); consumers resolve the ID → schema from a local cache. Compatibility modes and what they permit:
+
+| Mode | Consumers using old schema can read new data? | Allowed changes | Deploy order |
+|---|---|---|---|
+| `BACKWARD` (default, chosen) | Yes — new writer, old reader | Delete fields; add optional/defaulted fields | Consumers first |
+| `FORWARD` | Old writer, new reader | Add fields; delete optional/defaulted | Producers first |
+| `FULL` | Both directions | Only add/remove optional-with-default | Either |
+| `NONE` | No guarantee | Anything | You own the outage |
+
+`*_TRANSITIVE` variants check against **all** prior versions, not just the latest — use them, since consumers in a 7-day-replay world read arbitrarily old records. Enforced at CI (schema PR gate) *and* at registration time (registry rejects incompatible schemas), so an incompatible producer can't even start publishing. Rules that prevent the classic wrecks: never reuse or renumber a Protobuf field / never change an Avro field type in place; evolve by adding optional fields with defaults; breaking change ⇒ new topic (`order.events.v2`) with a migration period of dual-publish or a translator consumer. Failure containment: the registry sits on the produce/consume *setup* path only — clients cache schemas by ID with effectively infinite TTL, so a registry outage stalls new schema deployment, not steady-state traffic.
 
 **Thundering herd on recovery.** Downstream DB comes back after 10 min; consumers rip through 10 min of backlog at max speed and knock it over again. Fix: rate-limit consumers (token bucket per instance) at the sink's known safe throughput; drain deliberately, not maximally.
 
@@ -338,6 +466,11 @@ Interview notes: (1) **full jitter** prevents synchronized retry waves — with 
 | Manual post-batch offset commit | Redelivery duplicates on crash, absorbed by idempotency |
 | 48 partitions up front | Idle parallelism early, to avoid key-remapping later |
 | Consumer rate limiting at sinks | Slower backlog drain, to prevent recovery herding |
+| Cooperative-sticky + static membership | Two-round rebalance protocol complexity, for near-zero-pause deploys |
+| BACKWARD_TRANSITIVE schema compatibility, CI-enforced | Slower schema evolution (consumers deploy first), for zero broken-consumer incidents |
+| Priority via tiered topics, not per-message priority | Coarse-grained priority only, to keep offset/ordering semantics intact |
+| byte[] consumption + own-codec decode | A little boilerplate per consumer, to make deserialization poison pills routable instead of crash-loops |
+| Kafka transactions only for Kafka→Kafka stages | External sinks still need idempotency keys, to avoid pretending EOS crosses system boundaries |
 
 **Soundbites:**
 1. "Exactly-once delivery doesn't exist on a network; exactly-once *processing* is at-least-once plus idempotency — I build the latter and stop arguing about the former."
@@ -348,6 +481,12 @@ Interview notes: (1) **full jitter** prevents synchronized retry waves — with 
 6. "A DLQ without an alert is just a slow /dev/null."
 7. "Lag rising with idle CPUs means the bottleneck is downstream — scaling consumers would just aim the firehose better."
 8. "Interrogate ordering requirements: 'ordered' almost always means per-entity, and per-entity ordering is nearly free."
+9. "acks=all without min.insync.replicas=2 is a durability guarantee that evaporates exactly when you need it — the two settings are one decision."
+10. "Kafka's durability is replication, not fsync — which is why replicas belong in different racks, not just different processes."
+11. "Eager rebalancing stops the world for the whole group to move one partition; cooperative-sticky moves the one partition."
+12. "The registry that can't reject an incompatible schema at CI will let a producer break every consumer at 2 a.m. instead."
+13. "Alert on backlog age against retention, not on lag count — lag is a number, backlog age is a deadline."
+14. "A dedupe horizon shorter than the redelivery horizon turns 'exactly-once' into a comment in the design doc."
 
 **Common follow-ups:**
 - *"How do you replay just one customer's events?"* You can't seek by key — replay the time range with a filtering consumer, or maintain a keyed materialized view (compacted topic / event store) alongside.
@@ -356,3 +495,6 @@ Interview notes: (1) **full jitter** prevents synchronized retry waves — with 
 - *"Kafka without ZooKeeper?"* KRaft mode — metadata quorum inside Kafka; operationally simpler, the modern default.
 - *"Priority messages?"* Kafka has no priorities — separate topics per priority class with weighted consumer capacity; if you truly need per-message priority, that's a RabbitMQ-shaped problem.
 - *"When would you go back to a DB-table queue?"* Sub-1K msg/s, single consumer service, transactional enqueue wanted for free — it's simpler and correct; graduate when polling load or fan-out needs appear.
+- *"A consumer group is processing duplicates constantly, not just on crashes — where do you look?"* Ordered: (1) rebalance loop — check group state churn and `max.poll.interval.ms` vs actual batch processing time (each forced leave redelivers the in-flight batch); (2) commit failures — `CommitFailedException` swallowed in logs means offsets never advance; (3) retry-topic re-entry publishing a *new* `message_id` instead of propagating the original (breaks dedupe by construction — the redrive/retry path must preserve identity); (4) dedupe-table pruning shorter than the redelivery horizon (a 24 h prune with a 7-day replay = "duplicates" that are really un-deduped replays). The fix is rarely "add more dedupe" — it's stopping the redelivery source.
+- *"How do you run this across two regions?"* Decide the topology first: **active-passive** (MirrorMaker 2 / Confluent Replicator async-replicates topics; failover accepts a small unreplicated tail → consumers rely on idempotency to absorb the overlap after offset translation — MM2's checkpoint topic maps offsets between clusters, and it's approximate) vs **active-active** (each region produces locally to region-prefixed topics, both consume both — no failover, but per-key ordering only holds within a region, so route each entity's writes to a home region). Never stretch one Kafka cluster across high-latency WAN links (replication and controller quorums degrade); stretch clusters are for ≤ 2 ms metro links. The outbox helps again here: events survive in the source DB regardless of broker-replication gaps.
+- *"Consumer needs to call a rate-limited third-party API at 100 req/s but the topic peaks at 7 K msg/s — design it."* Don't fight it with consumer count. The queue *is* the buffer: run few consumers with a shared token bucket at 95 req/s, let lag grow during peaks, and alert on *backlog age vs retention* (data-loss horizon) rather than lag count. If peak sustained rate exceeds the API quota long-term, no queue saves you — shed (sample), batch (if the API has a bulk endpoint), or renegotiate the quota; a queue converts a rate mismatch into latency only when the *average* rate fits.

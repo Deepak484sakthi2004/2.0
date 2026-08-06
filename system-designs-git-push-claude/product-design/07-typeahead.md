@@ -335,6 +335,67 @@ List<Entry> propagateTopK(TrieNode node) {
 }
 ```
 
+### Trie node physical layout and serving-tier memory math
+
+Pointer-based tries die on cache misses; the serving structure is an **array-packed** trie: all nodes in one contiguous `node[]`, children referenced by index, suggestion strings deduplicated into a shared pool. Concrete layout per node:
+
+```
+struct Node {                         // fixed 8 B header
+    u32 first_child_idx;              // children stored contiguously, sorted by char
+    u8  child_count;
+    u8  flags;                        // isTerminal, hasTopK
+    u16 topk_off;                     // offset of this node's topK block within its page
+}
+// Every materialized node carries a full top-K: serving never walks up or
+// down to assemble an answer — one node hit, one 80 B block read.
+struct TopKEntry { u32 suggestion_id; f32 weight; }   // 8 B × 10 = 80 B
+struct ChildEdge { u16 codepoint_lo; u16 pad; u32 node_idx; }  // 8 B (BMP chars; astral via escape node)
+```
+
+Arithmetic for the 1B-query corpus, stated the way an interviewer wants it derived:
+- **Node count.** 1B queries × 20 chars = 20B character positions, but prefix sharing compresses hard: empirically ~2.5–4 distinct trie nodes per query at web-search skew (heads like `how to`, `what is` shared by millions). Take **3B nodes** as the planning number. Nodes below the frequency-threshold cutoff aren't materialized at all — we only keep nodes on the path to a surviving query.
+- **Per-node cost.** 8 B header + 80 B top-K block + (avg 1.5 children × 8 B edge) = **~100 B/node**. Optimization: leaf chains (single-child runs, i.e., the unique tail of a query) are path-compressed into radix edges storing a string-pool slice — cuts node count ~40%, so effective **~1.8B nodes × 100 B ≈ 180 GB**.
+- **String pool.** 1B suggestions × ~22 B avg (UTF-8 + length prefix) ≈ **22 GB**, shared across every node that references the id — this dedup is the whole reason top-K stores ids, not strings.
+- **Total ≈ 200 GB** serving-side (+ ~2× transient during build), matching the §1 estimate. Per shard at 8 shards: **~25 GB**, comfortably inside a 64 GB box with page cache and headroom; mmap'd so restart = remap, not rebuild.
+- Sanity check the other direction: if the interviewer pushes to 10B queries, nodes scale ~linearly → 2 TB → 32+ shards; the structure scales, the *builder* becomes the bottleneck first (§8 follow-up).
+
+### Top-K update algorithm — why online updates are avoided, and the delta patch that is used
+
+The hourly build is a full rebuild, but the trending overlay and same-day corrections need a *bounded* patch path. The algorithm that makes online update expensive — and the restricted form we actually run:
+
+```
+// Full online update (NOT run in serving; shown to justify rejecting it):
+onCountChange(query q, newWeight w):
+    node = walk(q)                       // terminal node of q
+    for anc in path(root -> node):       // up to len(q) ancestors, ~20
+        if q in anc.topK:
+            update weight; re-sort 10 entries            // cheap case
+            if w decreased below anc.topK[9].weight:
+                // q may fall OUT of top-K: need the K+1-th candidate,
+                // which precomputation discarded -> must re-merge all
+                // children's topKs: O(C·K log C) per ancestor
+                anc.topK = kwayMerge(children topKs, anc.terminal)
+        else if w > anc.topK[9].weight:
+            insert q, evict last                          // cheap case
+// Worst case: one decrement triggers K-way re-merges up 20 ancestors,
+// under concurrent reads -> locks or epoch-based reclamation on the
+// hottest path in the system. This is the §7 argument made concrete.
+```
+
+The production compromise — **overlay patching**, which never mutates the trie:
+1. Trending job emits `(query, boost)` deltas (~1K entries).
+2. Aggregator holds them in a per-prefix hash overlay: for each delta query, register it under its first ~8 prefixes (`t`, `ta`, `tay`, ...) → ~8K overlay keys, trivially rebuilt every push.
+3. At serve time, `TrendingBoostRanker` merges overlay hits into the trie's top-10 (12-element merge, nanoseconds). Deletions (incident blocklist) are the same shape with weight = −∞ via the bloom filter.
+4. Every hourly snapshot absorbs the deltas into the real weights; the overlay resets. Invariant: overlay size stays O(1K), so the mutable surface is negligible regardless of corpus size.
+
+### Decayed counting, precisely
+
+The weight recurrence deserves its own numbers because interviewers probe it:
+- `W_t = λ · W_{t-1} + c_t` (c_t = today's raw count). Closed form: `W_t = Σ λ^k · c_{t-k}` — an exponential moving sum. Half-life `h = ln(0.5)/ln(λ)`: λ = 0.95 → ~13.5 days; λ = 0.9 → ~6.6 days. Choose per corpus: news-heavy locales want shorter half-life than evergreen ones; λ is per-language build config, not code.
+- Why exponential over sliding window: O(1) state per query (one float) vs storing per-day counts for a true window; no cliff when an event exits the window; incremental — the pipeline only needs yesterday's snapshot + today's counts, never full history.
+- Steady-state intuition: a query with constant daily count c converges to `c / (1−λ)` (λ = 0.92 → 12.5×c), so weights are comparable across queries regardless of age; a query that stops being searched decays to threshold-cull in ~4–5 half-lives, which is the "garbage collection for relevance" soundbite made quantitative.
+- Practical guards: floor tiny weights to zero at threshold (denormal floats waste the pipeline), and apply decay *before* adding today's counts so a burst isn't immediately discounted.
+
 Serve-time blend (global + personal), same K-way merge shape:
 
 ```java
@@ -367,9 +428,24 @@ Personalization notes: user history is prefetched async on session start and cac
 
 **Trending topics — the real-time exception.** The batch trie is hours stale by design. A small Flink job over the Kafka log keeps count-min sketches per 5-min window, flags queries whose velocity z-score exceeds threshold, human/classifier-gates them (breaking-news spam is an attack vector), and pushes ~1K `(query, boost)` entries to an in-memory overlay on every aggregator. `TrendingBoostRanker` injects/boosts matches at serve time. Why this shape: it keeps the real-time surface *tiny* (1K entries, no persistence, safe to lose) while the 1B-entry structure stays batch. If the overlay dies, product quality degrades imperceptibly — the correct failure posture.
 
+**Trending detection mechanics (the fast path, quantified).** The Flink sidecar keeps, per 5-minute tumbling window, a count-min sketch (w=2^16 counters × d=4 hashes ≈ 1 MB — error ε ≈ 2e-5 of stream mass, fine because we only care about heads) plus a heavy-hitters list (SpaceSaving, top ~10K). Burst score per candidate: `z = (c_now − μ_baseline) / max(σ_baseline, σ_floor)` where baseline μ/σ come from the same weekday/hour over trailing weeks (diurnal + weekly seasonality would otherwise flag every lunchtime); `σ_floor` prevents division-by-tiny for previously-rare queries — which are exactly the interesting ones, so also require an absolute floor `c_now > c_min` (e.g., 500/5 min) to keep botnet-cheap fabrications out. Candidates passing z > 3 and c_min go through the spam/abuse classifier and an optional human queue for sensitive categories, then push to overlays with a decaying boost (halved every window without re-confirmation, so dead spikes self-clean in ~20 min). End-to-end freshness: event → suggestion in **5–10 min**, vs hours for the trie — and the entire mechanism is ~1 MB of sketch and 1K overlay entries.
+
 **Unicode / multi-language.** Normalize NFC + casefold in *both* pipeline and client/server request path or lookups miss. Trie on code points (not bytes) to avoid splitting multibyte chars; per-language index selected by `lang` + user locale, because ranking corpora must not mix ("real" in Spanish vs English). CJK: prefix means something different — index pinyin/romaji/jamo transliterations alongside native script (user types "bei" → 北京). Arabic/Hebrew RTL is a rendering concern, not an index concern, but diacritic-folding rules are per-language build config.
 
+Tokenization is where multi-language actually bites, because "prefix" presumes the user types left-to-right into word-ish units:
+- **Segmentation-free scripts** (Chinese, Japanese, Thai): no spaces, so "whole-query prefix" works but "last-word completion" needs a segmenter (dictionary/CRF-based, e.g., Jieba/MeCab-class) at *build* time to generate word-boundary entry points; at serve time the raw code-point prefix is still the key — never run a segmenter in the 20 ms path.
+- **IME composition**: CJK users type through an IME; the app sees composition events (`compositionupdate`), and firing suggests on half-composed syllables is noise. Client rule: suggest on the romanization buffer (pinyin trie) *during* composition, on committed text after. This is why transliteration indexes are first-class, not a bolt-on.
+- **Agglutinative languages** (Turkish, Finnish, Korean particles): long compounded words mean whole-query prefixes are sparse; build additionally indexes stem-boundary entry points ("arabalarımızdaki" reachable from "araba"). Same trie, extra insertion keys emitted by a per-language analyzer in the Spark job.
+- **Mixed-script queries** ("iphone 15 pro ケース"): normalize per-token, keep the query atomic in the corpus; language routing by dominant script + `lang` header, with a fallback lookup in the user's secondary locale index when primary returns < K.
+- Locale-sensitive casefolding traps: Turkish dotless-ı (`I`.lower() = `ı`, not `i`) — casefold must be locale-aware per index or Turkish lookups silently miss; German ß→ss folding must match between pipeline and serving exactly (shared normalization library, versioned with the snapshot).
+
 **Typo tolerance.** Full fuzzy search in the trie (edit-distance automaton intersection) costs 10–100× lookup work — usually declined at this latency budget. Cheaper 80% solutions: (a) pipeline-side — misspellings that are *common* are in the logs, so map them to canonical forms at build time ("gogle" node carries "google" in its top-K via a spell-correction join); (b) keyboard-adjacency single-substitution retry only when the exact prefix returns < K results (bounded to ~len(prefix) extra lookups, only on the sparse path where we have latency slack).
+
+Why fuzzy is architecturally a *separate path*, not a trie feature: exact-prefix lookup visits len(prefix) nodes; a Levenshtein-automaton intersection with the trie visits every node within edit distance d of the prefix — for d=1 that's O(len × σ) branches (~hundreds of nodes), for d=2 it explodes to tens of thousands, with terrible cache behavior. Bolting it onto the main path makes p99 hostage to the worst prefix. The clean design: exact path answers first and fast; a **fuzzy fallback service** is consulted *only* when exact results < K (true for maybe 2–5% of requests, and precisely the requests where users tolerate +20 ms because the alternative is an empty box). That service can afford different machinery: a d=1 Levenshtein automaton over a smaller "head" corpus (top 10M queries covers nearly all misspelling targets — nobody fat-fingers into the long tail), or SymSpell-style precomputed deletion neighborhoods (for each head query, store all len-1-deletion variants in a hash → candidate lookup is O(len) hashes, memory ~×(len+1) of the head corpus ≈ a few GB). Ranking rule: fuzzy candidates are always scored below any exact-prefix candidate and marked in logs — a fuzzy suggestion that wins clicks consistently is a signal to add the misspelling mapping to the build-time join, migrating the fix from the expensive path to the free one.
+
+**Shard rebalancing without downtime.** Traffic skew drifts (a game launch makes `pal…` hot for a month); the shard map must move ranges live. Procedure: (1) builder emits next snapshot already cut to the *new* ranges (splitting is cheap at build time — sub-tries are independent); (2) new replica set warms the moved range by loading its snapshot while the old owner still serves; (3) shard-map version bump in etcd flips routing atomically per aggregator watch; (4) old owner drains in-flight requests, drops the range. Because serving state is immutable snapshots, "moving" a range is just loading a file elsewhere — no data migration protocol, no double-write window. The rebalancer runs on a cadence, triggered when any shard's QPS or memory exceeds 1.5× fleet median; hysteresis (don't move a range back within 24 h) prevents flapping. This is another dividend of the immutable-snapshot decision worth naming explicitly: rebalancing a mutable store is a project, rebalancing snapshots is a config change.
+
+**Snapshot distribution at fleet scale.** 200 GB of snapshot × 24 boxes/region × 3 regions, hourly, is ~15 TB/day of internal transfer if done naively point-to-point from the builder. Fixes: per-shard snapshots (each box pulls only its ~25 GB), delta encoding between consecutive snapshots (hour-over-hour churn is ~1–5% of nodes → ship ~1 GB deltas with periodic full baselines), region-local object-store mirrors so cross-region transfer happens once, and pull-with-jitter so 72 boxes don't stampede the store at the top of the hour. Deploy orchestration ties into §5's validator: a region only advances when the prior region's canary metrics hold — snapshot rollout is a staged deploy like any binary.
 
 **Backpressure & overload.** Admission control at the aggregator: per-IP/session token bucket (a client bug emitting per-keycode-repeat requests is a self-DDoS); under load-shed conditions, drop personalization first (10 ms and a downstream dependency saved per request), then shorten prefixes served (serve len-3 CDN answer for len-5 request — approximate but cheap), then serve stale. Explicit degrade ladder, decided in advance, not improvised in the incident.
 
@@ -395,6 +471,10 @@ Personalization notes: user history is prefetched async on session start and cac
 | Client debounce 100 ms | Perceived suggestion lag on the last keystroke; 3–5× request reduction |
 | Empty-list-on-failure, never error | Silent quality loss is undetectable to users but must be caught by metrics (suggest CTR), not user reports |
 | Build-time filtering + tiny runtime bloom overlay | Same-day blocklist additions need the overlay path; full removal waits for next build |
+| Exponential decay (λ per locale) over sliding windows | One float of state per query and no window cliffs, in exchange for tuning λ and slower reaction than a hard cutoff |
+| Fuzzy matching as a fallback service, not a trie feature | Misspelled prefixes pay +20 ms and hit a smaller corpus; main-path p99 stays untouched |
+| Array-packed mmap'd trie with string-pool ids | Cache-friendly reads and O(seconds) restarts, for an offline builder that must own layout, path compression, and delta encoding |
+| Trending via 1 MB sketches + 1K-entry overlay | 5–10 min freshness only for burst heads; everything else waits for the hourly build — deliberate |
 
 ### Soundbites
 1. "Typeahead is a precomputation problem disguised as a search problem — at serve time it must be a key lookup, never a scan."
@@ -405,6 +485,8 @@ Personalization notes: user history is prefetched async on session start and cac
 6. "Personalization is a re-rank, not a re-retrieve: blend the user's history into the global top-N under a strict timeout, and always have the global list to fall back to."
 7. "Decay weighting is garbage collection for relevance — 'iphone 15' fades out of the top-K without anyone deleting it."
 8. "In degraded mode, stale beats empty beats error: yesterday's suggestions for 'wea' are still 'weather'."
+9. "Fuzzy matching lives on the empty-result path, where users have patience and I have latency slack — never on the happy path."
+10. "The overlay is how I keep the mutable surface to a thousandth of a percent: everything hot changes in RAM, everything big changes by snapshot."
 
 ### Common follow-ups, short answers
 - **"How would you support fuzzy matching?"** Build-time spell-correction mapping for common misspellings (they're in the logs); bounded 1-substitution retry only when exact prefix yields < K. Full edit-distance automata blow the latency budget.
@@ -414,3 +496,7 @@ Personalization notes: user history is prefetched async on session start and cac
 - **"How big can the trie get before this breaks?"** The design scales horizontally by splitting ranges; the real ceiling is build time — at 10B queries, move the builder itself to distributed construction (build sub-tries per range partition in parallel; they're independent by construction).
 - **"Why not count keystrokes as signal?"** Keystroke prefixes are biased by the suggestions we showed (feedback loop); only *submitted* queries are ground truth. Log impressions separately to debias ranking if you later train a model.
 - **"GDPR delete request?"** User history KV delete is immediate (personalization source of truth); global corpus contains only aggregate counts above threshold, no per-user data — thresholding at ingest is also the k-anonymity story.
+- **"How do you A/B test a ranking change safely at this scale?"** Bucket by session id at the `RankerFactory`; both arms read the same trie (ranking is serve-time blend, so no duplicate index). Guardrail metrics (suggest CTR, keystrokes-saved, abandonment) evaluated per arm with CUPED variance reduction; changes to the *build* (λ, thresholds) need shadow builds — run both pipelines, serve arm B's snapshot to 1% of aggregators via the shard map's snapshot-version field.
+- **"Suggestions leak private info — 'why does my name autocomplete to X'?"** Three layers: ingest thresholding (count < N never enters the corpus — protects rare personal queries), a PII classifier in the blocklist join (names+sensitive-attribute combinations, addresses, ID numbers), and the incident bloom overlay for same-day takedowns with a legal/reporting intake path. State the residual honestly: threshold-based k-anonymity fails for locally-common queries about locally-notable people — per-geo thresholds and the classifier carry that case.
+- **"What changes if this must also serve on-device (mobile keyboard, offline)?"** Ship a compressed head corpus (top ~1M queries per locale as an FST, ~10–20 MB) with the app; on-device answers instantly and offline, server refines when reachable. Merge rule: server list replaces on-device list when it arrives within 150 ms, otherwise on-device stands — never visibly reshuffle after paint. The FST snapshot rides the same build pipeline with a size-budgeted top-N cut.
+- **"Where would an ML ranker fit, and what stops you from using one for retrieval?"** Retrieval stays trie/top-K (candidate generation must be O(prefix)); a learned ranker (GBDT or two-tower with query/context features) re-scores the ~30 blended candidates inside the existing 10 ms personalization budget. Training data comes from impression + click logs — which is why §8 insists impressions are logged separately to debias the feedback loop. Full neural retrieval (embedding ANN per keystroke) costs 10–50× serve compute for gains that show up mainly on zero-result prefixes — exactly where the fuzzy fallback already operates, so start there if at all.
