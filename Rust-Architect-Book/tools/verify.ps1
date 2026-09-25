@@ -10,6 +10,7 @@
 
   mode     debug | release, optionally with an edition override: debug@2021
            and, for miri/miri-ok, "+tree" to use Tree Borrows instead of Stacked Borrows: debug+tree
+           and "+nightly" to compile that one check on the nightly channel: debug+nightly
   outcome  ok              must compile and exit 0 (stdout is printed)
            build           must compile (built as a lib, never run: for code that hangs by design)
            test            must compile and pass `cargo test` (the #[cfg(test)] tests in the file)
@@ -52,9 +53,12 @@ foreach ($file in $files) {
     foreach ($c in $checks) {
         # NB: PowerShell variable names are case-insensitive, so never reuse a parameter's name here.
         # "+tree" in the mode (e.g. debug+tree) runs miri/miri-ok under Tree Borrows instead of Stacked Borrows.
+        # "+nightly" (e.g. debug+nightly) compiles that check on the nightly channel (for #![feature] / rustc_attrs dumps).
         $modeRaw = $c.Groups[1].Value
         $aliasing = 'stacked'
         if ($modeRaw.Contains('+tree')) { $aliasing = 'tree'; $modeRaw = $modeRaw.Replace('+tree', '') }
+        $checkChannel = $Channel
+        if ($modeRaw.Contains('+nightly')) { $checkChannel = 'nightly'; $modeRaw = $modeRaw.Replace('+nightly', '') }
         $modeSpec = $modeRaw.Split('@')
         $checkMode = $modeSpec[0]
         $checkEdition = if ($modeSpec.Count -gt 1) { $modeSpec[1] } else { $Edition }
@@ -63,7 +67,7 @@ foreach ($file in $files) {
         $crateType = if ($outcome -eq 'build') { 'lib' } else { 'bin' }
 
         $body = @{
-            channel = $Channel; mode = $checkMode; edition = $checkEdition; crateType = $crateType
+            channel = $checkChannel; mode = $checkMode; edition = $checkEdition; crateType = $crateType
             tests = ($outcome -eq 'test'); backtrace = $false; code = $code
         } | ConvertTo-Json -Compress
         $uri = 'https://play.rust-lang.org/execute'

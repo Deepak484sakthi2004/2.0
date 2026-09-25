@@ -96,12 +96,12 @@
 
 # Part X — Closures, Iterators, and Zero-Cost Abstractions
 
-- [Part X Overview]()
-  - [10.1 Closures: Fn, FnMut, FnOnce, and Capture]()
-  - [10.2 The Iterator Trait and Laziness]()
-  - [10.3 How an Iterator Chain Compiles]()
-  - [10.4 Rust Iterators vs Java Streams]()
-  - [Part X Review]()
+- [Part X Overview](part-10-iterators/README.md)
+  - [10.1 Closures: Fn, FnMut, FnOnce, and Capture](part-10-iterators/ch01-closures.md)
+  - [10.2 The Iterator Trait and Laziness](part-10-iterators/ch02-iterator-trait.md)
+  - [10.3 How an Iterator Chain Compiles](part-10-iterators/ch03-chain-compiles.md)
+  - [10.4 Rust Iterators vs Java Streams](part-10-iterators/ch04-iterators-vs-streams.md)
+  - [Part X Review: The Settlement Report PR & Interview Mode](part-10-iterators/review.md)
 
 # Part XI — Concurrency
 
@@ -141,13 +141,13 @@
 
 # Part XIV — Memory Model and Atomics
 
-- [Part XIV Overview]()
-  - [14.1 Why Memory Ordering Exists: Store Buffers and Reordering]()
-  - [14.2 Happens-Before]()
-  - [14.3 Relaxed, Acquire/Release, and SeqCst]()
-  - [14.4 Compare-and-Swap, Fences, and Lock-Free Building Blocks]()
-  - [14.5 Rust Atomics vs Java volatile and VarHandle]()
-  - [Part XIV Review]()
+- [Part XIV Overview](part-14-memory-model/README.md)
+  - [14.1 Why Memory Ordering Exists: Store Buffers and Reordering](part-14-memory-model/ch01-why-ordering.md)
+  - [14.2 Happens-Before](part-14-memory-model/ch02-happens-before.md)
+  - [14.3 Relaxed, Acquire/Release, and SeqCst](part-14-memory-model/ch03-orderings.md)
+  - [14.4 Compare-and-Swap, Fences, and Lock-Free Building Blocks](part-14-memory-model/ch04-cas-fences-lock-free.md)
+  - [14.5 Rust Atomics vs Java volatile and VarHandle](part-14-memory-model/ch05-rust-vs-java.md)
+  - [Part XIV Review: The SPSC Ring PR & Interview Mode](part-14-memory-model/review.md)
 
 # Part XV — Unsafe Rust
 
@@ -302,5 +302,7 @@
   - [Part VII Answers](appendix/answers-part-07.md)
   - [Part VIII Answers](appendix/answers-part-08.md)
   - [Part IX Answers](appendix/answers-part-09.md)
+  - [Part X Answers](appendix/answers-part-10.md)
+  - [Part XIV Answers](appendix/answers-part-14.md)
 - [B. Glossary]()
 - [C. Sources and Further Reading]()

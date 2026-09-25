@@ -1,6 +1,6 @@
 # Progress & Continuity Ledger
 
-Last updated: 2026-09-25 (Parts V–IX complete; X, XI, XII, XIV, XV in progress) · Baseline: Rust 1.98.1 stable, edition
+Last updated: 2026-09-25 (Parts I–X and XIV complete; XI, XII, XV, XVII, XVIII in progress) · Baseline: Rust 1.98.1 stable, edition
 2024 (Playground-verified)
 Published to: https://github.com/Deepak484sakthi2004/2.0 (folder `Rust-Architect-Book/`)
 
@@ -22,10 +22,93 @@ need: concepts, promises, and Meridian facts.
 | VII | Generics and Monomorphization | **Written** (3 chapters + review capstone + answer key) | 27 files / 28 checks, all pass |
 | VIII | Error Handling | **Written** (4 chapters + review capstone + answer key) | 38 files / 42 checks (incl. 2 Miri), all pass |
 | IX | Collections and Memory | **Written** (5 chapters + BFS/DFS interlude + review + answer key) | 32 files / 40 checks, all pass |
-| X, XI, XII, XIV, XV | Iterators · Concurrency (L3, L4) · Async · Memory Model · Unsafe | In progress (wave 2) | — |
-| XIII, XVI–XXVI | … | Planned (see `src/SUMMARY.md`) | — |
+| X | Closures, Iterators, and Zero-Cost Abstractions | **Written** (4 chapters + review capstone + answer key) | 58 files / 70 checks (incl. 1 Miri, 1 nightly), all pass |
+| XIV | Memory Model and Atomics | **Written** (5 chapters + review capstone + answer key) | 38 files / 62 checks (incl. 25 Miri), all pass |
+| XI, XII, XV, XVII, XVIII | Concurrency (L3, L4) · Async · Unsafe · Compilers · rustc | In progress | — |
+| XIII, XVI, XIX–XXVI | … | Planned (see `src/SUMMARY.md`) | — |
 
 All listing counts were re-verified by the integrator after each writer finished (independent `tools/verify.ps1` run).
+
+## Part XIV concepts introduced
+
+| Concept | Where | Full treatment planned |
+|---|---|---|
+| Three reorderers (compiler, core, memory system); SC (Lamport 1979); coherence (per location) ≠ consistency | 14.1 | — |
+| SB litmus on real x86 (AMD EPYC 9R14, 4 vCPUs): Relaxed 5,321 / Rel-Acq 14,901 / SeqCst 0 / SeqCst fence 0 of 200,000 (one run); MP weak outcome 0 of 200,000 on x86 | 14.1 | — |
+| Reordering table x86-TSO / Armv8 / POWER (store→load only on x86; POWER not multi-copy atomic), with citations | 14.1 | XX.5 |
+| Compiler hoisting a flag loop into `jmp` to itself (`&bool`, `static mut`) vs `Relaxed` load (verified asm); loop → `memcpy` with one progress store | 14.1 | XVII.7 |
+| `compiler_fence` = `#MEMBARRIER` only; for signal handlers, never for threads | 14.1, 14.4 | XIX.6 |
+| Happens-before = sb + sw; data race definition and UB [LANG]; C++20 model adopted (no consume) | 14.2 | — |
+| Safe Rust can't race (E0499 on two scoped threads); `unsafe` race: debug lost 56% of increments, release collapsed loop to one `add`, Miri reports | 14.2 | XV |
+| Rigorous `Relaxed` counter proof (RMW atomicity + spawn/join edges + coherence), Chapter 1.3's promise | 14.2 | — |
+| Six std hb mechanisms (spawn/join, Mutex, channel, OnceLock, Barrier, Release/Acquire) checked by Miri (`miri-ok`) | 14.2 | XI |
+| Miri race detection: vector clocks, retags count as accesses, one schedule per run; TSan (nightly, unverified here) | 14.2 | XV.6, XXII.7 |
+| Read-read coherence measured: 61M scraper reads, 0 backwards | 14.2 | — |
+| Language table: data races in Rust / C / C++ / Java / Go (Go 2022 model) | 14.2 | — |
+| "Benign" racy hash cache: UB under Miri; atomic fix compiles to identical asm | 14.2 | — |
+| Three questions (Q1 publication → Rel/Acq, Q2 RMW handover → AcqRel, Q3 cross-location agreement → SeqCst) | 14.3 | — |
+| "Publish a buffer via a counter" counterexample: correct natively on x86, Miri data race; Release/Acquire fix | 14.3 | — |
+| Miri weak-memory emulation: MP Relaxed 21/40, SB Relaxed 20/40, IRIW Rel/Acq 3/40, all 0 with the stronger orderings | 14.3 | — |
+| Release sequences; P0668 (C++20 SeqCst revision) | 14.3 | — |
+| Orderings → LLVM IR (`monotonic` … `seq_cst`; `unordered` unexposed) → x86 asm (only SeqCst store differs: `xchg`) | 14.3 | XVIII.6 |
+| Ordering costs on x86 (one run): mov store 0.14 ns, xchg 2.08, lock xadd 2.07, SeqCst fence 1.98 | 14.3 | XX |
+| AArch64 mappings (ldar/stlr/dmb, LSE vs LL/SC) — unverified, labeled | 14.3 | XX |
+| `invalid_atomic_ordering` deny lint; run-time "there is no such thing as a relaxed fence" panic | 14.3 | — |
+| ArcSwap for snapshot publication + reclamation (Miri-clean) | 14.3 | XXI, XXIII |
+| RMW family and x86 lowering (`lock inc`, CAS loop for `fetch_or` with used result); CAS loop vs `try_update` vs `fetch_max` | 14.4 | — |
+| `fetch_update` renamed `try_update` (deprecated on nightly 1.100.0, `update` added) [VERSION] | 14.4 | — |
+| Spinlock (TTAS + backoff): Relaxed version keeps exclusion, Miri reports retag race | 14.4 | XI.3 |
+| Seqlock with atomics + fences (Boehm 2012), naive UnsafeCell seqlock UB under Miri | 14.4 | — |
+| Fence rules; `fence(SeqCst)` = `lock or dword ptr [rsp - 64], 0`; Arc drop = `lock dec` + `#MEMBARRIER`; MiniArc (Miri-clean) vs Relaxed refcount (Miri race) | 14.4 | XV |
+| ABA replayed deterministically on an index free list; tagged head fix; no `AtomicU128` on baseline x86-64 (E0432) | 14.4 | — |
+| Reclamation schemes table (EBR, hazard pointers, refcount, don't free); crossbeam-epoch Treiber stack Miri-clean under Tree Borrows only | 14.4 | XV.2 |
+| False sharing measured (shared 13.64, adjacent 14.96, 64-aligned 4.62, CachePadded 5.76, thread-local 1.20 ns/inc; one run) | 14.4 | XX.5 |
+| Spinning vs OS descheduling; `pause` latency varies by microarchitecture | 14.4 | XX.7 |
+| Java ↔ Rust mapping table (VarHandle modes, volatile, AtomicX, fences, synchronized, final, LongAdder, DCL) | 14.5 | — |
+| DCL hand-rolled (Miri-clean) vs Relaxed pre-Java-5 port (Miri race); `OnceLock`/`LazyLock` | 14.5 | — |
+| `read_volatile`/`write_volatile` are not Java `volatile` (Miri race on the flag) | 14.5 | XVI (MMIO/FFI) |
+| Striped counter (LongAdder) 8× faster than one AtomicU64 (one run); `sum()` not a snapshot | 14.5 | XX |
+| Final-field semantics unnecessary in Rust; JMM vs C++20 differences (racy reads, OOTA, reentrancy, reclamation) | 14.5 | — |
+| Testing tools: jcstress vs loom vs Miri vs TSan (loom/TSan unverified here) | 14.5 | XXII.7 |
+
+## Part X concepts introduced
+
+| Concept | Where | Full treatment planned |
+|---|---|---|
+| Closure = anonymous struct of captures; sizes measured (0 / 8 / 16 / 24 B; fn item 0 B, fn pointer 8 B, `Box<dyn Fn>` 16 B) | 10.1 | — |
+| Capture per place (edition 2021 disjoint capture; 2018 E0382 verified); `move` decides how captures are taken, not the trait | 10.1 | — |
+| Fn/FnMut/FnOnce inferred from the body; E0525 (kind mismatch) vs E0594 (assignment in an `Fn` body) depending on where the bound is written; E0382 calling an FnOnce twice | 10.1 | — |
+| Closure MIR: aggregate of captures + separate body fn `{closure#0}(_1: &mut {closure@..}, ..)`, captures as projections, tupled args via `FnMut::call_mut` | 10.1 | XVIII.4 |
+| Generic vs `&dyn Fn` vs fn-pointer call asm (vtable slot decoded); non-capturing closures coerce to fn pointers, capturing ones E0308 | 10.1 | — |
+| `impl Fn` return is one type (two closures → E0308); `Box<dyn Fn + Send + Sync>` for a choice | 10.1 | — |
+| Closure type unique per enclosing generic instance (`describe::<u8>::{{closure}}` observed) | 10.1 | — (7.3 promise kept) |
+| `move` over a `Copy` counter copies it (retry counter logged 0; verified) | 10.1 | — |
+| Closure compilation of an interpreter: AST walk 11.5 vs closures 6.3 vs hand-written 0.9 ns/record (release, one run) | 10.1 | XVII.7, XXVI |
+| RFC 114 unboxed closures (2014); Java lambdas via invokedynamic + LambdaMetafactory, effectively-final capture | 10.1 | — |
+| Async closures + `AsyncFn*` traits stable since 1.85 (forward mention only) | 10.1 | XII |
+| Iterator = one required method; pull-based, vertical, lazy (observed trace); `unused_must_use`-style laziness lint (verified) | 10.2 | — |
+| `iter` / `iter_mut` / `into_iter` and the three `for` forms; `for x in v` moves the Vec (E0382); array `into_iter` edition 2018 vs 2021 item types | 10.2 | — (2.5 promise kept) |
+| `size_hint` table for common adapters; ExactSizeIterator, DoubleEndedIterator; FusedIterator (unfused vs fused output) | 10.2 | — |
+| Zero-copy `Frames<'a>` iterator with errors as items (24 B, 0 allocations) | 10.2 | XIII (async frames) |
+| Lending iterators: std `Iterator` impossible (E0207), GAT version with 0 allocations (miri-ok), holding two items E0499 | 10.2 | — (4.5/6.2 promise kept) |
+| `gen` keyword reserved in edition 2024 (verified), `gen` blocks nightly-only (E0554 on stable) [VERSION] | 10.2 | XII.3 |
+| `zip` over-pulls from its first iterator (lost 1 item per batch with a non-exact source; `take` fix; Vec + collect hides it via specialization) | 10.2 | — |
+| `next()` inside a `for` loop (E0499) and the `while let` fix | 10.2 | — |
+| The adapter type IS the pipeline: nested `Enumerate<Take<Map<Filter<Iter>>>>` sizes 16 → 40 B | 10.3 | — (7.1 promise kept) |
+| `next()` vs `fold()`: `Chain` driven by `for` is a scalar loop re-testing state; `sum` (fold) is two vectorized loops (`paddq`); 0.42 vs 0.14 ns/elem | 10.3 | XX.6 |
+| `Box<dyn Iterator>`: only `next` crosses the vtable; 1.63 vs 0.08 ns/elem (~20×) | 10.3 | XX |
+| Bounds-check strategies in asm (index loop, zip, pre-sliced) | 10.3 | XX.6 |
+| Chain == index loop 0.41 = 0.41 ns/elem in release (Chapter 1.3's asm, measured); debug numbers 10–25× slower | 10.3 | — (1.3 promise kept) |
+| In-place `collect`: `SourceIter` + `InPlaceIterable` [LIB]; 0 allocations and inherited capacity (filter keeps 1% → cap 1,000,000); `shrink_to_fit` = 1 alloc | 10.3 | — (9.1/9.5 promise kept) |
+| Mid-pipeline `collect`: 17 allocations / 2.67 MB vs 0 fused | 10.3 | — |
+| Collect into `Result`/`Option` (short-circuit), `try_fold` with `ControlFlow`, checked arithmetic in folds | 10.4 | — |
+| `Collectors` translated (groupingBy → BTreeMap/HashMap fold, partitioningBy, joining, toMap duplicate-key semantics) | 10.4 | — |
+| Iterators are values: reuse E0382, `Clone` iterators; Java streams one-shot (IllegalStateException) | 10.4 | — |
+| `?` inside a closure (E0277) and the three fixes | 10.4 | — |
+| Rayon `par_iter` vs `parallelStream`: 3.6× on 4 threads, trivial work barely helps, f64 sum not reproducible (verified) | 10.4 | XI.6 |
+| Gatherers (JDK 24, JEP 485) vs itertools / scan / windows [VERSION] | 10.4 | — |
+| Pipeline model benchmark: static flat 0.41, static boxed 1.26, dyn flat 1.91, dyn boxed 1.96 ns/elem | 10.4 | XX |
+| HashMap iteration order randomized per process vs Java's stable-in-practice order | 10.4 | — |
 
 ## Part IX concepts introduced
 
@@ -387,27 +470,31 @@ with the chapter that made the promise in parentheses.
 
 ### Open promises
 
-- **Part X (Iterators):** `for x in vec` vs `&vec` vs `&mut vec` properly (2.5 answer key); iterator chain adapter by
-  adapter (7.1, 7.3); closure types unique per enclosing generic instance (7.3); fn item vs fn pointer vs closure (2.4);
-  HRTB closures returning references (4.5); GATs and lending iterators (4.5, 6.2); how in-place `collect`
-  specialization is wired (9.1, 9.5); zero-cost claims of 1.3 (bounds checks, vectorization).
+- ~~**Part X (Iterators):** `for x in vec` vs `&vec` vs `&mut vec`; iterator chain adapter by adapter; closure types
+  per generic instance; fn item vs pointer vs closure; HRTB closures; lending iterators/GATs; in-place `collect`;
+  zero-cost claims of 1.3~~ **KEPT** (10.1–10.4).
 - **Part XI (Concurrency):** Cell→atomics transition (4.1); Arc swap for catalogs/route tables (3.1, 3.3); parallel
   `logstat` with per-thread Summary merge (L1 review Q7); poisoning policy per lock, worker pools that survive job
   panics, Ferrite v1 panic policy (8.3); interior mutability in full (4.1); the concurrency decision matrix (Part I);
   Send/Sync manual impls and why they're unsafe, disjoint-capture subtlety (5.3, 6.4); concurrent maps measured
   (sharding, ArcSwap, owner thread), parallel `chunks_mut`/rayon, level-synchronous parallel BFS, channels (9.1, 9.3,
-  Interlude); measure atomic vs mutex vs no-sharing (1.3; XX deepens).
+  Interlude); measure atomic vs mutex vs no-sharing (1.3; XX deepens); `ArcSwap<Pred>` for hot-swapped compiled rules
+  (10.1); why Rayon closures are `Fn + Send + Sync` and how work stealing splits an iterator (10.4, 11.6); `Mutex`
+  spin-then-futex and reentrant `synchronized` porting (cited by 14.4, 14.5; already in 11.3).
 - **Part XII (Async):** async recursion needs `Box::pin` (2.4, Interlude); why async/await fits "no runtime"; stackless
   future sizes; RFC 230 green threads removal (1.2); Go G-M-P/netpoller vs stackless (1.2); `async fn` in traits and
-  dyn compatibility (6.4); RPIT capture rules for async return types (6.1, 7.3).
+  dyn compatibility (6.4); RPIT capture rules for async return types (6.1, 7.3); async closures and `AsyncFn*` (10.1);
+  `gen` blocks vs `async fn` coroutine lowering (10.2).
 - **Part XIII (Tokio):** cancellation = dropping a future mid-flight (1.3, 1.4); frame split across two network reads
   (2.4 design exercise); async tail service reusing the logstat library; no locks across `.await`; `Box<dyn Error>`
   without `Send + Sync` across `.await` (8.2); Ferrite v2 `-ERR <CODE>` errors with busy/shutting-down codes (8.4);
   buffer pools with capacity caps (9.1); `spawn_blocking` for CPU-heavy work (9 answers); Drop can't await (3.5);
-  `JoinError::is_panic` (8.3).
-- **Part XIV (Memory model):** Relaxed vs Acquire/Release with the "publish a buffer via a counter" counterexample (1.3);
-  Relaxed justified by join (1.3); JLS 17.7 (1.1); MESI analogy (3.3); false sharing / `CachePadded` measured (5.2, 9.5).
-- **Part XV (Unsafe):** Stacked/Tree Borrows (4.2, 4.6); Miri in CI (4.6); drop check + `#[may_dangle]` and PhantomData's
+  `JoinError::is_panic` (8.3); Rayon doesn't belong on async executor threads (10.4).
+- ~~**Part XIV (Memory model):** publish-via-counter counterexample, Relaxed justified by join, JLS 17.7, MESI analogy,
+  false sharing measured~~ **KEPT** (14.1–14.5).
+- **Part XV (Unsafe):** crossbeam-epoch 0.9.20 `Local::element_of` UB under Stacked Borrows, accepted under Tree
+  Borrows (14.4 §5 defers the difference to 15.2); `unsafe impl Send/Sync` obligations and `MaybeUninit` slots used in
+  Part XIV; Stacked/Tree Borrows (4.2, 4.6); Miri in CI (4.6); drop check + `#[may_dangle]` and PhantomData's
   drop-check row (3.5, 5.3); `split_at_mut` / `get_disjoint_mut` internals (4.1); safety vs validity invariants and
   niches (2.3, 5.2); `set_len`, leak amplification (`Vec::drain`); privacy as memory-safety boundary (2.7); ZST handling
   (5.3); `try_reserve`/fallible allocation, intrusive linked lists, `GlobalAlloc` explained (9.1, 9.4, Part III).
@@ -416,7 +503,8 @@ with the chapter that made the promise in parentheses.
   exports over generic internals (7.2), Java string transfer FFM vs JNI (9.2); `Option<&T>`/`repr(transparent)`
   guarantees, `repr(C)` enums (RFC 2195) (5.2, 6.5); loading a `cdylib` plugin with the C-ABI vtable of 6.5.
 - **Part XVII (Compilers):** SSA/φ/register allocation deepened (2.3); type inference by unification (2.3); Java
-  definite assignment as dataflow (4.2).
+  definite assignment as dataflow (4.2); LICM hoisting, loop → `memcpy`, loop collapse and their data-race-freedom
+  license (14.x, from the compiler's side; also XVIII); closure compilation of an interpreter (10.1 benchmark).
 - **Part XVIII (rustc):** trait solver, intercrate mode, vtable layout internals (6.3, 6.4); monomorphization collector,
   CGU partitioning, shared generics, LLVM function merging, Cranelift, `-Z self-profile`/`-Z time-passes` (7.1, 7.3);
   exhaustiveness/match lowering on THIR/MIR (2.5, 5.1); `?` in MIR (8.1); borrow checking on MIR, Polonius (4.2);
@@ -428,7 +516,9 @@ with the chapter that made the promise in parentheses.
   no-sharing ranking (1.3); the gateway benchmark; false sharing (5.2); tagged vs niche in memory (5.2); AoS/SoA and
   hot-cold splitting (5.2, 9.5); `perf stat -e branch-misses` for dispatch (6.5); pointer chasing, i-cache, chunked f64
   sum, code-size budget (7.x); panic cost vs depth, Result-vs-exception benchmark (8.x); gateway access-log p99, fraud
-  feature-vector p99, THP/huge pages, order-book benchmark, allocator contention (9.x); deferred drop (3.1).
+  feature-vector p99, THP/huge pages, order-book benchmark, allocator contention (9.x); deferred drop (3.1); `next()` vs
+  `fold()` and `dyn Iterator` costs under `perf`, vectorization details (10.3); `perf c2c`, ordering costs on Arm,
+  `pause`/backoff tuning, gateway per-worker counters on Graviton (14.x).
 - **Part XXI (Networking):** harden the Meridian gateway (Part I review); timeouts, retries, circuit breakers, retry
   budgets, deadline propagation (8.4); HashDoS and network input (9.3); Netty ByteBuf analogy (4.3, 4.5); io::ErrorKind
   by connection phase (8.4).
@@ -437,7 +527,8 @@ with the chapter that made the promise in parentheses.
   choice (8.2); axum `IntoResponse for PaymentError` (8.4, unverified sketch); tower Retry policy by error class; Tower
   `BoxService` hybrid (6.5); tracing observability (8.4); clippy `result_large_err` (8.2); cargo-hack / cargo-deny /
   `cargo tree -d` / cargo-semver-checks, `#[non_exhaustive]` semver (2.2, 5.1, 6.2, 6.3); fuzzing the header parser;
-  serde_json recursion limit (Interlude).
+  serde_json recursion limit (Interlude); concurrency testing in CI: loom (`cfg(loom)`), TSan, Miri seeds, aarch64
+  stress runners (14.x → 22.7).
 - **Part XXIII (Storage):** transaction guard → real transactions (3.5); commit with unknown outcome (8.3); persistent
   encodings instead of in-memory layout, padding (5.2); DB compare-and-set for state transitions (5.4); Ferrite v3
   `FerriteError` and a fallible store API (8.2 design exercise: reconcile with the brief's contract by adding a
@@ -562,6 +653,27 @@ Payments-and-marketplace company; mostly Java, one C++ team, Go tooling. Systems
 | Merchant-onboarding rule engine crash loop | analyst JSON rules, recursive evaluator on Tokio workers; partner rule ~40,000 deep → stack overflow abort → crash loop across replicas; quarantine + depth limit 64 + explicit stack | Interlude |
 | Dependency resolver (build tooling, Go today) | design exercise: ~40,000 packages, depth ~15, one ~9,000-deep legacy chain | Interlude |
 | Velocity store (fraud) | Part IX review capstone: Java-shaped port; profile ~2,000 events/s, ~150K merchants, ~5M cards/day | review |
+| Gateway log sampler | config rules like `status>=500 \|\| path^=/payments && latency>250`; closure compilation chosen (20-line `compile`), `Pred` in `ArcSwap`; interpreter would cost ~4.6 ms CPU/s at 400K req/s; analytics pipeline compiles fixed rules to Rust | 10.1 §9 |
+| Retry counter incident | `move` over `Copy` `attempts` in the gateway's retry helper → access log reported 0 attempts; retry-budget alert stayed flat while upstream traffic tripled during a processor brownout; fix: helper returns `(Result, attempts)` | 10.1 §10 |
+| Market-data replay tool | capture files replayed through `Frames<'a>`; 2 GB segments, 0 allocations per frame; truncated trailing frames are items; `FusedIterator` required for chained segments | 10.2 §9 |
+| Ingestion batcher incident | `by_ref().zip(0..size)` batching lost 1 event per batch from a channel (batch 500 → 1 in 501); 0.2% gap in nightly reconciliation, dismissed for a week; fix `take(n)` + tests with non-exact sources | 10.2 §10 |
+| Settlement batch job guidelines | ~40M rows/night, CSV + ISO 20022 XML; `Box<dyn Iterator>` per file format (~65 ms dispatch/night, accepted); generic per-row work; no mid-pipeline collects; the real cost was a `String` per CSV field | 10.3 §9 |
+| Fraud blocklist memory incident | refresh every 10 min; ~8M candidates (32 B) → ~2% active; in-place collect kept ~256 MB per list; OOM kills at the 1 GB limit; fix `shrink_to_fit` + capacity gauge | 10.3 §10 |
+| Merchant statement job (Rust port) | moved from Java; `BTreeMap` for stable order, integer `fold` accumulator, `try_fold` over `Result<Txn, LedgerError>` rows | 10.4 §9 |
+| Fee schedule duplicate-key incident | partner CSV export; Java `toMap` threw on duplicates; Rust port's `collect` kept the last row → m-100 charged 190 bps instead of 290 for three days; porting checklist per `Collectors` method | 10.4 §10 |
+| Settlement report PR | Part X review capstone (settlement batch job): 14 defects — duplicate fee row silently wins, `unwrap` on partner input, `move` copy of a counter (compiler warned), audit side effect in `map` cut short by `any` (4 of 50,000 audited), discarded suspicious list, `zip` batching dropped payouts (10 of 12 merchants paid), `f64` fee truncation, in-place capacity kept, mid-pipeline collects, per-transaction `String` clones, `fees[&m]` panic, side effect in lazy `map`, `HashMap` order in bank batches, CI accepted warnings; fixed listing with 5 tests | Part X review |
+| Gateway drain handshake | per-worker `in_flight` flags + global `draining` flag = SB/Dekker pattern; first draft Release/Acquire rejected; all four accesses `SeqCst` with a documented comment; ~2 ns `xchg` per request | 14.1 §9 |
+| Settlement-reconciliation worker (Rust batch) | `static mut STOP: bool` read by value, hoisted in release; pods ignored SIGTERM, SIGKILL after 30 s grace; a killed batch left a partial report file consumed downstream; fix `AtomicBool` `Relaxed`; rule: "a `static mut` in review is a question" | 14.1 §10 |
+| Gateway process-wide metrics | `requests_total`, `bytes_out_total`, `panics_total` `AtomicU64` `Relaxed`, scraped every 15 s; no cross-counter consistency (documented); per-tenant billing counter pair uses `Mutex<(u64, u64)>` per shard | 14.2 §9 |
+| Fraud library `Symbol` hash cache | ported Java `String.hashCode()`-style racy cache; caught by the Miri CI job added after Chapter 4.6; fix `AtomicU64` `Relaxed` (identical asm) | 14.2 §10 |
+| Risk-limits snapshots | `RwLock` reader-count contention → immutable snapshots via `ArcSwap` | 14.3 §9 |
+| Access-log shipper on Graviton | per-worker 256-slot batch, `len` `Relaxed` ("x86 is TSO"); correct for 8 months on x86; after a third of the gateway pool moved to Graviton: stale lines in 0.002% of batches, two cross-tenant exposures disclosed; fixes: Release/Acquire both directions, Miri test, aarch64 CI runners, review rule on `Relaxed` comments | 14.3 §10 |
+| Gateway per-worker counters | Graviton profile: `requests_total.fetch_add` a top hot spot; first redesign `Vec<AtomicU64>` false-shared; shipped per-worker `CachePadded` blocks summed on scrape | 14.4 §9 |
+| Risk-limits reservation slots | naive lock-free index free list → ABA double-booking at 3× load test; one-week investigation, reproduced only under oversubscription; shipped `Mutex<Vec<u32>>`, then per-worker slot ranges next quarter; rule: lock-free needs ABA + reclamation argument, Miri test, benchmark | 14.4 §10 |
+| Fraud library concurrency port | translation sheet: `volatile Model` + DCL → `ArcSwap<Model>` (hourly reload); static-init map → `LazyLock`; `LongAdder` → per-worker `CachePadded`; `AtomicLong lastModelLoadMillis` → `AtomicU64` `Relaxed`; `ConcurrentHashMap` feature cache → sharded `Mutex<HashMap>`; `synchronized` → `Mutex` | 14.5 §9 |
+| Model-reload flag incident | Java `volatile boolean reloadRequested` ported with `read_volatile`/`write_volatile`; Miri job (mandatory for `unsafe impl Sync` since the hash-cache incident) caught it; fix `AtomicBool` Release/Acquire; `clippy.toml` `disallowed-methods` bans `read_volatile`/`write_volatile` | 14.5 §10 |
+| Market-data fan-out SPSC ring PR | Part XIV review capstone: feed-handler → fan-out thread ring replacing a crossbeam channel; x86 CI green, Miri red; 10 defects (both handovers `Relaxed`, `Sync` without `T: Send`, SPSC not enforced by types, no `Drop`, index overflow, `%` division, false sharing, "x86 is TSO" justification, capacity 0) | Part XIV review |
+| Design exercises | latency histogram (64 buckets + count + sum, scraped every 15 s); settlement MPMC work queue (16 workers, p99 enqueue < 10 µs); 64-worker config snapshot; Meridian porting guide (concurrency section); multi-architecture test policy | 14.1–14.5 |
 
 **Ferrite** (the reader's own system) starts at Project Level 4 (Part XI); its v1–v5 contract is in `notes/AUTHORING-BRIEF.md`.
 

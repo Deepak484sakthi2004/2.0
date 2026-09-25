@@ -75,10 +75,15 @@ Recurring boxes (blockquotes): **What actually happens?**, **Why not X?**, **Ana
 - `verify.ps1` header outcomes: `ok`, `build`, `test` (runs #[cfg(test)] tests), `panic <needle>`, `crash <needle>`
   (aborts, e.g. stack overflow), `error:E0xxx`, `error:<word>`, `miri <needle>` (UB must be reported, nightly Miri),
   `miri-ok`. Mode may carry an edition override: `debug@2021`, and (for Miri) `+tree` to use Tree Borrows instead of
-  Stacked Borrows: `debug+tree miri-ok`.
+  Stacked Borrows: `debug+tree miri-ok`, and `+nightly` to compile one check on nightly (`#![feature]`, rustc_attrs
+  dumps such as `#[rustc_dump_variances]`, which prints `['a: +, T: o]` as an error): `debug+nightly error:<word>`.
 - `tools/emit.ps1 <file> -Target asm|llvm-ir|mir|hir|expand -Mode debug|release` fetches compiler artifacts
   (`hir`/`expand` use nightly). Save outputs to the scratchpad and quote them trimmed.
 - PowerShell variables are case-insensitive: never name a local the same as a script parameter (this bit us once).
+- Parts V+ are written by parallel writers per `notes/AUTHORING-BRIEF.md`; integrate each finished Part with
+  `bash tools/merge-report.sh NN` (inserts its concept table in Part order and appends its Meridian rows to
+  `PROGRESS.md`), then edit the status row, the open-promises list, and `src/SUMMARY.md` by hand, re-verify its
+  listings, and exclude unfinished Parts' folders when publishing (robocopy `/XD` + `/XF`).
 - One intended compile error per listing (earlier-phase errors hide later-phase ones).
 - The Playground `/compile` endpoint (target `asm` / `llvm-ir` / `mir`) is useful for "what does the compiler emit" claims.
   Mark functions `#[inline(never)]` when inspecting a lib crate: rustc (since 1.75) treats small leaf functions as

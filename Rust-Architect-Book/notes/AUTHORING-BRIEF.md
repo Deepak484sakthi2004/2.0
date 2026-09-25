@@ -22,7 +22,7 @@ Re-read these exemplars on disk before writing:
 3. **Every Rust code block that is claimed to compile/run is backed by a listing file** in `listings/part-NN/` with
    `// verify:` headers, and was verified with `tools/verify.ps1` (outcomes: ok, build, test, panic, crash,
    error:E0xxx, error:<word>, miri, miri-ok; edition override `debug@2021`; Tree Borrows instead of Stacked Borrows
-   for Miri: `debug+tree miri-ok`). Quote **real** compiler output and program
+   for Miri: `debug+tree miri-ok`; one check on nightly: `debug+nightly ...`). Quote **real** compiler output and program
    output (trimmed only; say "labels simplified" if you edit asm labels). `rust,compile_fail` blocks show the real error.
    Use `rust,ignore` for excerpts of a verified listing (say which listing) or for clearly-labeled unverified sketches.
 4. **Compiler artifacts** (MIR/LLVM IR/asm/macro expansion) come from `tools/emit.ps1`; use `#[inline(never)]` on
