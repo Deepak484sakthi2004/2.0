@@ -1,0 +1,13 @@
+[book]
+title = "Source to Silicon: Rust for the Systems Architect"
+description = "An architect-level course in Rust: from source code through the compiler, the binary, the OS and the CPU, up to distributed-system design and language design."
+language = "en"
+src = "src"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+
+[output.html.playground]
+editable = false
+copyable = true
