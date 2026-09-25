@@ -1,6 +1,6 @@
 # Progress & Continuity Ledger
 
-Last updated: 2026-09-25 (Parts I–X and XIV complete; XI, XII, XV, XVII, XVIII in progress) · Baseline: Rust 1.98.1 stable, edition
+Last updated: 2026-09-25 (Parts I–XII and XIV complete; XV partial (15.1–15.3); XVII, XVIII in progress) · Baseline: Rust 1.98.1 stable, edition
 2024 (Playground-verified)
 Published to: https://github.com/Deepak484sakthi2004/2.0 (folder `Rust-Architect-Book/`)
 
@@ -23,11 +23,48 @@ need: concepts, promises, and Meridian facts.
 | VIII | Error Handling | **Written** (4 chapters + review capstone + answer key) | 38 files / 42 checks (incl. 2 Miri), all pass |
 | IX | Collections and Memory | **Written** (5 chapters + BFS/DFS interlude + review + answer key) | 32 files / 40 checks, all pass |
 | X | Closures, Iterators, and Zero-Cost Abstractions | **Written** (4 chapters + review capstone + answer key) | 58 files / 70 checks (incl. 1 Miri, 1 nightly), all pass |
+| XI | Concurrency | **Written** (7 chapters + Project L3 HTTP server + Project L4 Ferrite v1 + review + answer key) | 55 files / 69 checks (incl. 5 Miri), all pass |
+| XII | Async Rust | **Written** (6 chapters + review capstone + answer key) | 59 files / 75 checks (incl. 12 Miri), all pass |
 | XIV | Memory Model and Atomics | **Written** (5 chapters + review capstone + answer key) | 38 files / 62 checks (incl. 25 Miri), all pass |
-| XI, XII, XV, XVII, XVIII | Concurrency (L3, L4) · Async · Unsafe · Compilers · rustc | In progress | — |
+| XV | Unsafe Rust | **Partial**: 15.1–15.3 + overview + answers for 15.1–15.3 written. 15.4–15.6 and the review are **not written**: three writer attempts were stopped by a safety classifier (see `notes/part-15b-report.md`); 15.4's listings exist and are verified | 73 files / 120 checks (incl. 15.4's 15 files / 22 checks), all pass |
+| XVII, XVIII | Compilers · rustc | In progress | — |
 | XIII, XVI, XIX–XXVI | … | Planned (see `src/SUMMARY.md`) | — |
 
 All listing counts were re-verified by the integrator after each writer finished (independent `tools/verify.ps1` run).
+
+## Part XV concepts introduced
+
+| Concept | Where | Full treatment planned |
+|---|---|---|
+| Five superpowers; unsafe defines vs discharges; edition-2024 `unsafe_op_in_unsafe_fn`, `unsafe extern` + `safe` items, `#[unsafe(no_mangle)]` (1.82 syntax) | 15.1 | XVI |
+| Soundness defined; validity vs safety invariants table; library UB vs language UB | 15.1 | — |
+| Invalid bool returns 2 (release), `test`+`cmovne` variant returns 10; null ref, uninit int, invalid char, misaligned read (release OK / debug check / Miri) | 15.1 | — |
+| Non-UTF-8 `str`: release "capacity overflow", debug precondition, Miri "entering unreachable code" in core validations | 15.1 | — |
+| Debug precondition checks (1.78+, "optional, cannot be relied on"); `invalid_from_utf8_unchecked`, `useless_ptr_null_checks` lints | 15.1 | XV.6 |
+| #25860 status on 1.98.1: classic snippet rejected, higher-ranked variant compiles (Miri: dangling) | 15.1 | XVIII.3 |
+| Unsafe code may trust private fields and unsafe traits, never safe traits (`ExactSizeIterator` liar → heap overflow; `TrustedLen`) | 15.1 | — |
+| Module = unit of trust (safe `restore` broke `HeaderBlock`); enforcement table (type / run-time / debug / unsafe fn / unsafe trait) | 15.1 | — |
+| Pointer = address + provenance; same address, different provenance (native reads `b`, Miri UB; Miri spaces allocations) | 15.2 | XVI |
+| `add` → `getelementptr inbounds nuw`, `wrapping_add` → plain GEP (debug IR); both `lea` in release, merged | 15.2 | XVIII.6 |
+| OOB arithmetic UB without deref (Miri "in-bounds pointer arithmetic failed") | 15.2 | — |
+| Strict provenance (1.84): `addr`/`with_addr`/`map_addr`; tagged pointer Miri-clean in both models; exposed provenance warning | 15.2 | — |
+| Stacked Borrows mechanics (tags, retags, per-location stack) + Tree Borrows (Reserved/Active/Frozen/Disabled); POPL 2020 / PLDI 2025 | 15.2 | XV.6 |
+| `as_mut_ptr()` twice: UB under SB, OK under TB; std `split_at_mut` shape (one pointer) OK in both | 15.2 | — |
+| `container_of` via `&field`: UB under SB (retag covers `[0x8..0x10]` only), OK under TB; `&raw const (*whole).field` passes both | 15.2 | XV.6 (intrusive lists) |
+| Two `&mut` to one element: SB error at creation, TB error at use ("foreign write" → Disabled); `get_disjoint_mut` shape (bounds + pairwise distinct) | 15.2 | — |
+| `noalias` exploited: `transfer(&mut, &mut)` returns 70 while memory holds 100 (release asm, no reload); debug 100/100 | 15.2 | XX |
+| `set_len` after init via `spare_capacity_mut`; `invalid_reference_casting` deny lint | 15.2 | — |
+| Frame header: raw cast (release `0xfeca`/`704643072`, debug misaligned abort, Miri alignment UB) vs safe `from_be_bytes` (cmp + load + `bswap`) vs `zerocopy` (`U32<BigEndian>`, align 1) | 15.2 | XXIII.5 |
+| Low-bit vs high-bit pointer tags; canonical addresses; TBI/LAM; CHERI and strict provenance | 15.2 | XIX |
+| Three wrappers = three switched-off assumptions; niche table: `Option<MaybeUninit<&u8>>` 16, `Option<ManuallyDrop<&u8>>` 8, `Option<UnsafeCell<NonZeroU32>>` 8 vs 4 | 15.3 | — |
+| `*p = v` on uninit slot drops garbage (Miri in `raw_vec` via `Vec<u8>` Drop); `write` vs assignment | 15.3 | — |
+| `mem::uninitialized` today: 0x01 fill (`u64 = 0x0101…`, `bool = true`), panics for `&u64` | 15.3 | — |
+| Panic during init: leak (0 drops) vs guard (2 drops); `write` then `init += 1` order | 15.3 | XV.4 |
+| `ManuallyDrop` for drop order and Vec round trip; `Vec::into_raw_parts` stable on 1.98; `ptr::read` double drop (Miri use-after-free) | 15.3 | XVI.4 |
+| `MyCell` over `UnsafeCell`; shared-write via helper evades lint, Miri "SharedReadOnly"; `!Sync` E0277 inherited | 15.3 | XI.4 |
+| Why `UnsafeCell` hides niches (tag would change behind `&`) | 15.3 | — |
+| Drop check: plain Drop E0597; std Vec `#[may_dangle]`; nightly `dropck_eyepatch`; PhantomData<T> keeps element drop checked; without it: compiles + UAF (Miri) | 15.3 | — |
+| Zeroing cost: `resize` → `memset` in asm; measured 166–175 vs 287–293 ns per 16 KiB read (3 runs); pooled buffer kept initialized; `BorrowedBuf` unstable (E0658, #117693) | 15.3 | XX.4 |
 
 ## Part XIV concepts introduced
 
@@ -70,6 +107,92 @@ All listing counts were re-verified by the integrator after each writer finished
 | Striped counter (LongAdder) 8× faster than one AtomicU64 (one run); `sum()` not a snapshot | 14.5 | XX |
 | Final-field semantics unnecessary in Rust; JMM vs C++20 differences (racy reads, OOTA, reentrancy, reclamation) | 14.5 | — |
 | Testing tools: jcstress vs loom vs Miri vs TSan (loom/TSan unverified here) | 14.5 | XXII.7 |
+
+## Part XII concepts introduced
+
+| Concept | Where | Full treatment planned |
+|---|---|---|
+| Thread per connection measured: `EAGAIN` at connection 503 (sandbox task limit); 2,064 KiB virtual / ≈9.5 KiB resident per thread; glibc malloc arenas (64 MiB each, up to 8 × cores) explain the first-100-threads jump | 12.1 | XIX.5 |
+| Nonblocking spin (19,617 `read` calls for 4 bytes); select/poll/epoll/kqueue table; epoll level- vs edge-triggered verified natively and under Miri (Miri models epoll + socketpairs) | 12.1 | XXI.1 |
+| mio C10K: 10,000 connections, 1 server thread, 8,807 `epoll_wait` wakeups, RSS +264 KB; `RLIMIT_NOFILE` raised via libc; kernel sockstat | 12.1 | XIII.1 |
+| Completion I/O (io_uring, IOCP) needs owned buffers because drop = cancel (`tokio-uring`, `glommio`, `monoio`) | 12.1 | XXI, XXIII.1 |
+| Kernel limits for threads (`pids.max`, `vm.max_map_count`, `threads-max`/`pid_max`, `RLIMIT_NPROC`, `RLIMIT_NOFILE`); Java "unable to create native thread" | 12.1 | XIX.6 |
+| RFC 230 → `Future` in `core`, async as a library; timeline 2014–2025 (async-std discontinued 2025 [VERSION]); C10K (Kegel 1999), C10M (Graham 2013), thread-per-core runtimes | 12.1 | — |
+| `Future` contract table (Pending obligation, no blocking, no poll after Ready, spurious polls); lazy futures (16-byte `charge` future); `unused_must_use` on futures as an error | 12.2 | — |
+| Lost wakeup three ways (NeverRegisters / RegistersOnce hang, RefreshesEveryPoll ok); `Waker::will_wake`; check-and-publish atomically | 12.2 | XIII.3 |
+| `join`/`select` by hand; cancellation = drop (verified with a `Drop` reporter); `CompletableFuture` comparison (`cancel(true)` doesn't interrupt) | 12.2 | XIII.4 |
+| In-flight waiter coalescing (`WaitFor`): wake after releasing the lock; never hold a lock across `.await` | 12.2 | XIII.3 |
+| Future sizes (1 B `nothing` … 1,026 B array across await, 8 B dead before it, 1,028 B sequential vs 2,072 B joined, 16 B boxed); hand-written enum 24 B vs compiler 40 B | 12.3 | — |
+| Real coroutine MIR (`coroutine layout`, variants Unresumed/Returned/Panicked/SuspendN, `storage_conflicts`), resume `switchInt`, "`async fn` resumed after completion" panic; release asm jump table + waker vtable call `[rcx + 16]` | 12.3 | XVIII.4 |
+| `async fn` arguments stored twice (prefix upvar + saved local): 64 B vs 40 B (`answers-ch03-sizes.rs`) [RUSTC] | 12.3 answers | XVIII.4 |
+| `!Send` futures verified: `Rc`, `MutexGuard`, `Box<dyn Error>` across `.await` (error has no code: `error:future` needle); fixes | 12.3 | XIII.2 |
+| E0733 async recursion; `Box::pin` = 1 × 16-byte allocation per level (counting allocator) | 12.3 | — |
+| `async fn` in traits (1.75): E0038 for `dyn`; Send bound problem (E0277 + compiler's `-> impl Future + Send` suggestion); RTN (RFC 3654) unstable; async closures (1.85) with `AsyncFn` | 12.3 | XXII.3 |
+| Returned future captures all argument lifetimes (E0502 before polling, `ch03-18`); RPITIT always captures, edition 2024 extends to free fns | 12.3 | — |
+| 1 MiB future overflows a 512 KiB stack (debug + release); cancellation safety + guard pattern (`payout_v1`/`v2`) | 12.3 | XIII.4 |
+| Self-referential struct dangling under Miri; pinned version miri-ok (Stacked + Tree Borrows); E0277 "cannot be unpinned"; every async future `!Unpin` (even `async { 1 + 1 }`) | 12.4 | XV.2 |
+| Pin guarantee (no move + drop guarantee); `Pin::new` / `pin!` / `Box::pin` / `new_unchecked` table; `Pin<&mut F>` and `Pin<Box<F>>` 8 B | 12.4 | — |
+| Intrusive waiter list (40-byte node inside the future), miri-ok under both models; without the `Drop` unlink → use-after-free under Miri | 12.4 | XIII.3, XV.4 |
+| Hand-written pin projection (`WithBudget`) + the five structural-pinning obligations; one safe `impl Unpin` → UAF (`ch04-06`); `pin-project-lite` + E0119 on a manual `Unpin` | 12.4 | XV.1 |
+| `&mut T` for `T: !Unpin` loses `noalias` and `dereferenceable` in LLVM IR; `UnsafePinned` (RFC 3467) [VERSION] | 12.4 | XVIII.6 |
+| `block_on` with the park/unpark token (Miri-clean); `RawWaker` vtable by hand (16 B; clone/wake/wake_by_ref/drop accounting, Miri) | 12.5 | — |
+| Executor: run queue + `queued` dedup flag cleared before the poll; timer thread + `BinaryHeap` + `Condvar`; `JoinHandle` as a future | 12.5 | XIII.1 |
+| Reactor on mio: 100 clients, 1 thread, 201 tasks, 302 polls, 2 `epoll_wait` calls (derived from the code) | 12.5 | XIII.1 |
+| Spawn cost: ≈158 ns / 2 allocations per task vs ≈36 µs per OS thread spawn + join (one run) | 12.5 | XX |
+| Deterministic simulation executor (virtual time, seeded scheduling): check-then-act double charge in 183 of 1,000 seeds, replayable; FoundationDB attribution; turmoil/madsim | 12.5 | XXII.7, XXIV |
+| Wake dedup measured (n = 1,000: 252,000 vs 2,500 child polls); `futures::join_all` switches to `FuturesOrdered` above 30 children [LIB] | 12.5 | XIII |
+| Memory per unit measured: thread 2,064 KiB virtual / 9.6 KiB resident vs task 247 B heap / 0.28 KiB resident (34× resident, not 8,500×); `LocalPool` spawn-queue high-water mark (3 MiB) retained, not leaked | 12.6 | XIX.5 |
+| Round trip: threads 7.7–9.6 µs vs async tasks 115–118 ns (three runs) | 12.6 | XX.7 |
+| Blocking on the executor: 194 ms heartbeat stall vs 1 ms with `spawn_blocking`; CPU-bound: 143 ms vs 1 ms with `yield_now` every ≈140 µs (1,025 yields, no measurable cost); coop budget doesn't cover pure computation | 12.6 | XIII.2 |
+| Stackful runtimes: Go (copying stacks 1.3, 2 KiB 1.4, adaptive start 1.19, netpoller, P handoff, async preemption 1.14, cgo stack switch); Java VT (JEP 444 mount/unmount, heap stack chunks, no time-slicing, pinning, JEP 491 in JDK 24); Erlang reductions; why M:N failed in C and in pre-1.0 Rust | 12.6 | — |
+| Function coloring (E0728); `Handle::block_on` inside a runtime panics ("Cannot start a runtime from within a runtime"); ways-across table (`spawn_blocking`, `block_in_place`) | 12.6 | XIII.2 |
+| Cancellation compared: Rust drop, Java interrupt (`Thread.stop` throws since JDK 20), Go `context`, Erlang exit signals | 12.6 | XIII.4 |
+| Five-model × ten-criterion concurrency decision matrix; "choose by where the waiting is and who owns the code that waits" | 12.6 | XXI, XXIV |
+
+## Part XI concepts introduced
+
+| Concept | Where | Full treatment planned |
+|---|---|---|
+| std::thread = 1:1 OS thread; spawn = pthread_create → clone + 2 MiB mmap stack + 4 KiB `---p` guard page, seen in `/proc/self/maps` and `/proc/self/task` (TID = PID for main) | 11.1 | XIX.4, XIX.6 |
+| `'static` on spawn as an ownership statement; JoinHandle = result moved back (`Ok(T)` or panic payload `&str`/`String`); main returning kills other threads (verified: detached uploader never printed) | 11.1 | — |
+| spawn+join ~28–34 µs vs hand-off ~5.7 µs (one run); oversubscription: same total, mean completion 73 vs 57 ms (64 threads vs pool of 4) | 11.1 | XX |
+| Thread memory: virtual vs resident stack, kernel per-thread cost, limits (ulimit -u, threads-max, pids.max, max_map_count); Little's law pool sizing; no `interrupt()`, cooperative cancellation | 11.1 | XIX.5 |
+| Send/Sync defined via aliasing XOR mutation; auto-trait table read from the compiler (inherent-const probe trick); E0277 notes as the proof chain; std's on_unimplemented RwLock suggestion | 11.2 | — |
+| Disjoint capture changes which types are checked (2018 E0277 vs 2024 OK; non-move `stats.hits` bypassing a wrong `unsafe impl Sync`) | 11.2 | — |
+| False `unsafe impl Sync` on Cell counters → Miri "Data race detected"; AtomicU64 version miri-ok; rusqlite `Connection` Send-not-Sync from its RefCells | 11.2 | XV |
+| Rc vs Arc clone asm (`inc` vs `lock inc`); Rc 1.1 / Arc 3.5 / shared Arc 57.2 ns (4 threads) / per-thread Arc 3.6 ns | 11.2 | XIV.1 |
+| Auto traits as implicit public API (a private field is semver-major); `unsafe impl` justification table; bounds for APIs (`Box<dyn Error + Send + Sync>`, `Arc<dyn Trait + Send + Sync>`) | 11.2 | XXII (semver-checks) |
+| Mutex owns data; guard = run-time `&mut`; `Arc::try_unwrap(..).into_inner()` / `get_mut` need no locking | 11.3 | — |
+| Futex mutex asm (`lock cmpxchg` / `xchg`, state 0/1/2, poison byte at +4, data at +8; `Mutex<u64>` = 16 B); futex-based since 1.62 | 11.3 | XIX.6 |
+| Poisoning: three policies (propagate / ignore / repair + `clear_poison` 1.77) with verified output; per-lock policy table | 11.3 | — |
+| Condvar bounded queue (`wait_while` consumes/returns the guard; spurious wakeups; close + drain) | 11.3 | XIII.3 |
+| Linux std RwLock prefers writers: recursive read while a writer waits deadlocks (verified via `try_read`); parking_lot same, `read_recursive` | 11.3 | — |
+| Guard lifetime = temporary lifetime: `if let` else-branch relock works in 2024, deadlocks in 2021; `match` holds the guard in all editions | 11.3 | — |
+| Lock ordering by id (8 threads, no deadlock); non-reentrant Mutex (Java port trap); shared-map E0499 vs Java 7 / Go failures | 11.3 | — |
+| UnsafeCell: the only legal mutation through `&T` (3 effects); Miri "SharedReadOnly" without it; MyCell on UnsafeCell miri-ok | 11.4 | XV.3 |
+| OnceLock (init once under race, one Acquire load after) vs LazyLock (poisoned forever after a panicking init); `get_or_try_init` unstable (E0658) | 11.4 | XIV (orderings) |
+| Per-request Cells folded into global atomics in Drop (4 RMWs per request) — Chapter 4.1's promise | 11.4 | — |
+| Interior-mutability family sizes (RefCell 16, OnceCell<String> 24, Mutex<()> 8, RwLock<()> 12, parking_lot::Mutex<()> 1, Mutex<[u8;64]> 72) | 11.4 | — |
+| Read path: Mutex<Arc> 219 ns, RwLock<Arc> 259 ns, ArcSwap 7.8 ns, plain 2.1 ns (4 readers, one run); arc-swap debts | 11.4 | XX |
+| ArcSwap route table + dropper thread waiting for the last reference (0 torn reads, 50/50 freed on dropper) | 11.4 | — |
+| Channels move ownership (E0382 after send); disconnection = end of stream; Empty vs Timeout vs Disconnected; try_send/SendError hand the value back | 11.5 | XIII.3 |
+| std mpsc = crossbeam port since 1.67 (list/array/zero flavors, stamps with Release/Acquire, parking); Sender: Sync since 1.72; Receiver !Sync (E0277); std `mpmc` unstable (E0658) | 11.5 | — |
+| crossbeam select + shutdown by dropping a Sender; owner-thread pattern with one-shot reply channels | 11.5 | — |
+| Unbounded channel memory byte-exact: 72 B per 64-B message, 31-slot blocks, 7,058 KiB per 100K; bounded(1000) refuses 99,000 | 11.5 | — |
+| Channel cost: ~18–24 ns/item buffered, ~5.7–7 µs lockstep (`sync_channel(1)`), ~5 ns batched, 0.4 ns no channel (one run each) | 11.5 | XX |
+| `thread::scope` soundness by control flow; `thread::scoped` Leakpocalypse rebuilt → Miri dangling reference; stable 1.63 | 11.6 | XV.1 |
+| Rayon: deques, LIFO owner / FIFO thieves, adaptive splitting, `join`; parallel logstat exact merge (81.9 → 36.2 scoped / 27.9 rayon ms, one run) | 11.6 | — |
+| Parallel BFS level-synchronous with CAS claims (363.9 → 196.5 ms); par_iter break-even ~10K–100K cheap elements (tens of µs) | 11.6 | XX |
+| Rayon closures must be `Fn + Send + Sync` (E0596 for captured mutation) vs Java parallelStream lost updates | 11.6 | — |
+| Counter ranking, 5 runs: no sharing 0.3–0.6 < padded 2.9–6.7 < false sharing 5–23 ≈ shared atomic 9–19 < parking_lot 26–35 < std Mutex 38–181 ns; CachePadded = 128 B | 11.7 | XIV.4, XX.5 |
+| Concurrent maps, 5 runs (4 threads, 95% reads): Mutex 160–272, RwLock 92–154, 16-shard Mutex 74–76, 16-shard RwLock 76–81 ns, owner thread 6.5–19.4 µs | 11.7 | — |
+| I/O under a lock: 943 vs 3,687 req/s (3.9×); the ~1,000/s ceiling derived | 11.7 | XX.7 |
+| Single-writer counter `store(load + 1)` compiles to `inc` without `lock` (verified asm) vs `fetch_add` = `lock inc` | 11.7 | XIV |
+| Decision procedure + seven-design twelve-criteria matrix; Java concurrency API mapped row by row with analogy limits | 11.7 | — |
+| Project L3: WorkerPool<T> (bounded queue, `try_submit -> Result<(), T>`, catch_unwind per item, Drop = graceful shutdown), HTTP/1.1 parsing with limits, 503 admission control, keep-alive, idle timeout, self-connect shutdown trick | L3 | XIII (Ferrite v2), XXI |
+| Project L4 Ferrite v1: `KvStore` (&self, owned values, dyn-compatible, infallible in v1), ShardedStore (16 RwLock shards, RandomState router), recover-count-clear poisoning, line protocol + pipelining flush rule, L3 pool reused unchanged | L4 | XIII (v2), XXIII (v3), XXIV (v4, v5) |
+| Ferrite v1 measured: 98.6K (debug) / 184K (release) cmds/s over loopback TCP with 8 clients; 2.6M / 18.8M ops/s in-process (one run); shard spread 347–411 of 375 ideal | L4 | XIII (compare with v2) |
+| Review capstone: check-then-act over-admission bounded by limit + threads − 1 (26–27 of 20, five runs); lock-order inversion; poison → double-panic abort chain; fixed design (one critical section, act after, bounded audit writer with rollback, per-window billing) | Part XI review | — |
 
 ## Part X concepts introduced
 
@@ -473,68 +596,95 @@ with the chapter that made the promise in parentheses.
 - ~~**Part X (Iterators):** `for x in vec` vs `&vec` vs `&mut vec`; iterator chain adapter by adapter; closure types
   per generic instance; fn item vs pointer vs closure; HRTB closures; lending iterators/GATs; in-place `collect`;
   zero-cost claims of 1.3~~ **KEPT** (10.1–10.4).
-- **Part XI (Concurrency):** Cell→atomics transition (4.1); Arc swap for catalogs/route tables (3.1, 3.3); parallel
-  `logstat` with per-thread Summary merge (L1 review Q7); poisoning policy per lock, worker pools that survive job
-  panics, Ferrite v1 panic policy (8.3); interior mutability in full (4.1); the concurrency decision matrix (Part I);
-  Send/Sync manual impls and why they're unsafe, disjoint-capture subtlety (5.3, 6.4); concurrent maps measured
-  (sharding, ArcSwap, owner thread), parallel `chunks_mut`/rayon, level-synchronous parallel BFS, channels (9.1, 9.3,
-  Interlude); measure atomic vs mutex vs no-sharing (1.3; XX deepens); `ArcSwap<Pred>` for hot-swapped compiled rules
-  (10.1); why Rayon closures are `Fn + Send + Sync` and how work stealing splits an iterator (10.4, 11.6); `Mutex`
-  spin-then-futex and reentrant `synchronized` porting (cited by 14.4, 14.5; already in 11.3).
-- **Part XII (Async):** async recursion needs `Box::pin` (2.4, Interlude); why async/await fits "no runtime"; stackless
-  future sizes; RFC 230 green threads removal (1.2); Go G-M-P/netpoller vs stackless (1.2); `async fn` in traits and
-  dyn compatibility (6.4); RPIT capture rules for async return types (6.1, 7.3); async closures and `AsyncFn*` (10.1);
-  `gen` blocks vs `async fn` coroutine lowering (10.2).
+- ~~**Part XI (Concurrency):** Cell→atomics, Arc swap for catalogs/route tables, parallel `logstat`, poisoning policy,
+  pools that survive panics, Ferrite v1 panic policy, interior mutability, the decision matrix, Send/Sync manual impls,
+  disjoint capture, concurrent maps measured, rayon/parallel BFS, channels, atomic vs mutex vs no-sharing measured,
+  Java mapping, Ferrite v1 contract~~ **KEPT** (11.1–11.7, Projects L3 and L4). Small gap: Part XIV didn't compare
+  seqlocks with Java's `StampedLock` (11.3 §8 promised it); pick it up in XX.7 or XXIV if natural.
+- ~~**Part XII (Async):** async recursion needs `Box::pin`, "no runtime", stackless future sizes, RFC 230, Go
+  G-M-P/netpoller vs stackless, `async fn` in traits and dyn compatibility, RPIT capture for async return types,
+  `AsyncFn*`, `gen` blocks vs coroutine lowering~~ **KEPT** (12.1–12.6; `Box<dyn Error>` across `.await` delivered early
+  in 12.3).
 - **Part XIII (Tokio):** cancellation = dropping a future mid-flight (1.3, 1.4); frame split across two network reads
   (2.4 design exercise); async tail service reusing the logstat library; no locks across `.await`; `Box<dyn Error>`
   without `Send + Sync` across `.await` (8.2); Ferrite v2 `-ERR <CODE>` errors with busy/shutting-down codes (8.4);
   buffer pools with capacity caps (9.1); `spawn_blocking` for CPU-heavy work (9 answers); Drop can't await (3.5);
-  `JoinError::is_panic` (8.3); Rayon doesn't belong on async executor threads (10.4).
+  `JoinError::is_panic` (8.3); Rayon doesn't belong on async executor threads (10.4); `Semaphore`/`Notify` vs the 12.2
+  and 12.4 design exercises (waiter lists, lost-permit bug); LIFO slot, cooperative budget, timing wheel, eventfd waker,
+  `block_in_place`, blocking pool (default cap 512); `tokio::sync::Mutex` across `.await` and why you usually still
+  shouldn't (12.3); the "there is no reactor running" panic (12.1); per-method cancellation safety (12.3); Ferrite v2
+  connection limit and graceful shedding, merchant-notify admission control and handshake budget (12.1, 12.6);
+  Ferrite v2 keeps the v1 protocol and `ShardedStore` behind `Arc`, adds a **write timeout** and a cap on unflushed reply
+  bytes (L4 §5 gap), and decides whether `get` returns shared immutable values (`Arc<[u8]>`/`Bytes`) so no lock is held
+  across `.await` (L4 review Q2); per-request concurrency limits instead of rayon for fetches (11.6); "don't block the
+  executor" mirrors rayon's rule (11.6); `tokio::sync::mpsc` for async stages (11.5); slow clients cost KiB, not a thread
+  (L3 §5).
 - ~~**Part XIV (Memory model):** publish-via-counter counterexample, Relaxed justified by join, JLS 17.7, MESI analogy,
   false sharing measured~~ **KEPT** (14.1–14.5).
-- **Part XV (Unsafe):** crossbeam-epoch 0.9.20 `Local::element_of` UB under Stacked Borrows, accepted under Tree
-  Borrows (14.4 §5 defers the difference to 15.2); `unsafe impl Send/Sync` obligations and `MaybeUninit` slots used in
-  Part XIV; Stacked/Tree Borrows (4.2, 4.6); Miri in CI (4.6); drop check + `#[may_dangle]` and PhantomData's
-  drop-check row (3.5, 5.3); `split_at_mut` / `get_disjoint_mut` internals (4.1); safety vs validity invariants and
-  niches (2.3, 5.2); `set_len`, leak amplification (`Vec::drain`); privacy as memory-safety boundary (2.7); ZST handling
-  (5.3); `try_reserve`/fallible allocation, intrusive linked lists, `GlobalAlloc` explained (9.1, 9.4, Part III).
+- **Part XV (Unsafe), partially kept:** ~~crossbeam-epoch `Local::element_of` SB-vs-TB (14.4), `unsafe impl Send/Sync`
+  obligations and `MaybeUninit` slots (Part XIV), Stacked/Tree Borrows (4.2, 4.6), drop check + `#[may_dangle]` +
+  PhantomData's drop-check row (3.5, 5.3), `split_at_mut`/`get_disjoint_mut` internals (4.1), validity invariants and
+  niches (2.3, 5.2), `set_len`, privacy as memory-safety boundary (2.7), soundness depending on same-module safe code
+  (12.4)~~ **KEPT** (15.1–15.3). **Still open, owed by the unwritten 15.4–15.6:** leak amplification (`Vec::drain`), ZST
+  handling (5.3), `try_reserve`/fallible allocation (9.1), `GlobalAlloc` and the counting allocator explained (Part
+  III), intrusive linked lists (9.4), Miri in CI with both aliasing models (4.6, 12.x); verified listings for 15.4 exist
+  (`listings/part-15/ch04-*.rs`).
 - **Part XVI (FFI):** `extern "C"` stable ABI, `catch_unwind` at FFM entry points, `extern "C-unwind"` (2.2, 8.3); `cdylib`
   exported symbols (2.7); the fraud library via FFM: `meridian_score` codes 0/-1/-99 (8.3), concrete `score_batch`
   exports over generic internals (7.2), Java string transfer FFM vs JNI (9.2); `Option<&T>`/`repr(transparent)`
-  guarantees, `repr(C)` enums (RFC 2195) (5.2, 6.5); loading a `cdylib` plugin with the C-ABI vtable of 6.5.
+  guarantees, `repr(C)` enums (RFC 2195) (5.2, 6.5); loading a `cdylib` plugin with the C-ABI vtable of 6.5; the fraud
+  library's thread-affine native scoring handle and the owner-thread design (11.2); `unsafe extern` blocks with `safe`
+  items in real bindings (15.1); `Vec::into_raw_parts`/`from_raw_parts` and `Box::into_raw` across the C boundary
+  (15.3); exposed provenance for addresses from C (15.2).
 - **Part XVII (Compilers):** SSA/φ/register allocation deepened (2.3); type inference by unification (2.3); Java
   definite assignment as dataflow (4.2); LICM hoisting, loop → `memcpy`, loop collapse and their data-race-freedom
   license (14.x, from the compiler's side; also XVIII); closure compilation of an interpreter (10.1 benchmark).
 - **Part XVIII (rustc):** trait solver, intercrate mode, vtable layout internals (6.3, 6.4); monomorphization collector,
   CGU partitioning, shared generics, LLVM function merging, Cranelift, `-Z self-profile`/`-Z time-passes` (7.1, 7.3);
   exhaustiveness/match lowering on THIR/MIR (2.5, 5.1); `?` in MIR (8.1); borrow checking on MIR, Polonius (4.2);
-  post-monomorphization errors (7.1); privacy phases (2.7).
+  post-monomorphization errors (7.1); privacy phases (2.7); coroutine MIR state transform, prefix/overlap layout, and
+  `async fn` arguments stored twice (12.3, measured 64 B vs ~32 B expected); `getelementptr inbounds nuw` from
+  `ptr::add` and LLVM merging identical functions (15.2).
 - **Part XIX (Binary/OS):** mmap input for logstat; linking in depth (2.1); unwind tables (`.eh_frame`, LSDA) and
   backtrace symbolization (8.2, 8.3); exit statuses (8.3); freed memory vs RSS (3.1); guard pages and stack probes
-  (Interlude); musl static linking (2.1).
+  (Interlude); musl static linking (2.1); `strace` of thread spawn (`clone`, `mmap`, `munmap`), thread-stack virtual
+  memory, futex syscalls (11.1, 11.3, 11.7); canonical addresses and pointer tagging (TBI/LAM) (15.2).
 - **Part XX (Performance):** PGO/BOLT (2.2, 7.2); runtime CPU feature detection (2.1); opt-level 2 vs 3; atomic/mutex/
   no-sharing ranking (1.3); the gateway benchmark; false sharing (5.2); tagged vs niche in memory (5.2); AoS/SoA and
   hot-cold splitting (5.2, 9.5); `perf stat -e branch-misses` for dispatch (6.5); pointer chasing, i-cache, chunked f64
   sum, code-size budget (7.x); panic cost vs depth, Result-vs-exception benchmark (8.x); gateway access-log p99, fraud
   feature-vector p99, THP/huge pages, order-book benchmark, allocator contention (9.x); deferred drop (3.1); `next()` vs
   `fold()` and `dyn Iterator` costs under `perf`, vectorization details (10.3); `perf c2c`, ordering costs on Arm,
-  `pause`/backoff tuning, gateway per-worker counters on Graviton (14.x).
+  `pause`/backoff tuning, gateway per-worker counters on Graviton (14.x); tail latency from long polls,
+  `perf stat -e context-switches,cpu-migrations` on the ping-pong, allocator effects on per-task memory (12.6);
+  lock wait/hold-time measurement, `perf sched`, off-CPU flame graphs, `perf c2c` (11.7); thread pinning and placement,
+  NUMA and thread-per-core (11.1, 11.7); `RwLock` vs `Mutex` shards for large Ferrite values; `wrk` load curves for L3;
+  `noalias` benefits in loops, zeroing cost vs buffer size (15.2, 15.3).
 - **Part XXI (Networking):** harden the Meridian gateway (Part I review); timeouts, retries, circuit breakers, retry
   budgets, deadline propagation (8.4); HashDoS and network input (9.3); Netty ByteBuf analogy (4.3, 4.5); io::ErrorKind
-  by connection phase (8.4).
+  by connection phase (8.4); owned-buffer completion I/O (io_uring) for servers, socket-buffer tuning at scale (12.1);
+  TLS for L3/L4 (21.3); HTTP/2 streams and chunked bodies (L3, 21.2); request-smuggling strictness (duplicate
+  `Content-Length`), per-request deadlines against slowloris (L3 §5).
 - **Part XXII (Ecosystem):** serde zero-copy (`Cow<'a, str>`, `DeserializeOwned`) (4.3, 4.5); serde `transparent` /
   `try_from` at boundaries (5.3); tagged enums (2.6); money as strings in JSON (2.3); clap; thiserror/anyhow in crate
   choice (8.2); axum `IntoResponse for PaymentError` (8.4, unverified sketch); tower Retry policy by error class; Tower
   `BoxService` hybrid (6.5); tracing observability (8.4); clippy `result_large_err` (8.2); cargo-hack / cargo-deny /
   `cargo tree -d` / cargo-semver-checks, `#[non_exhaustive]` semver (2.2, 5.1, 6.2, 6.3); fuzzing the header parser;
   serde_json recursion limit (Interlude); concurrency testing in CI: loom (`cfg(loom)`), TSan, Miri seeds, aarch64
-  stress runners (14.x → 22.7).
+  stress runners (14.x → 22.7); deterministic simulation testing (turmoil, madsim) and Miri in CI (12.5); publishing
+  `WorkerPool` as a crate (L3 review Q7, 22.1); Tower (22.3); `cargo-semver-checks` for lost auto traits (11.2); a
+  binary-safe framing for Ferrite (L4 omissions → Project L6).
 - **Part XXIII (Storage):** transaction guard → real transactions (3.5); commit with unknown outcome (8.3); persistent
   encodings instead of in-memory layout, padding (5.2); DB compare-and-set for state transitions (5.4); Ferrite v3
   `FerriteError` and a fallible store API (8.2 design exercise: reconcile with the brief's contract by adding a
-  fallible trait or adapter, keeping v1's `KvStore` usable); zero-copy `RequestRef<'a>` (1.4).
+  fallible trait or adapter, keeping v1's `KvStore` usable); zero-copy `RequestRef<'a>` (1.4); Ferrite v3 adds the
+  fallible trait **next to** `KvStore` (L4 §3) and reuses `store_semantics` as a conformance suite (L4 §4);
+  `update`/`INCR` logs the result, not the closure; transactions and cross-shard atomicity (23.6); zero-copy formats
+  with `zerocopy`/`bytemuck`, byte order in the type (15.2 §9 → 23.5).
 - **Part XXIV (Distributed):** idempotency + reconciliation for ambiguous outcomes, "did it happen?" (8.4); generational
-  arena / LRU reused (3.6).
+  arena / LRU reused (3.6); deterministic simulation for Ferrite's replication tests (12.5); Ferrite v5 replaces
+  `RandomState` routing with a stable hash or range partitioning behind a versioned partition map (L4 §2); the leader
+  executes read-modify-writes and replicates results; partitioning large state (11.7 §5).
 - **Part XXVI (Language):** specialization and language-design trade-offs (6.3); `#[non_exhaustive]` and exhaustiveness
   (5.1).
 
@@ -674,6 +824,45 @@ Payments-and-marketplace company; mostly Java, one C++ team, Go tooling. Systems
 | Model-reload flag incident | Java `volatile boolean reloadRequested` ported with `read_volatile`/`write_volatile`; Miri job (mandatory for `unsafe impl Sync` since the hash-cache incident) caught it; fix `AtomicBool` Release/Acquire; `clippy.toml` `disallowed-methods` bans `read_volatile`/`write_volatile` | 14.5 §10 |
 | Market-data fan-out SPSC ring PR | Part XIV review capstone: feed-handler → fan-out thread ring replacing a crossbeam channel; x86 CI green, Miri red; 10 defects (both handovers `Relaxed`, `Sync` without `T: Send`, SPSC not enforced by types, no `Drop`, index overflow, `%` division, false sharing, "x86 is TSO" justification, capacity 0) | Part XIV review |
 | Design exercises | latency histogram (64 buckets + count + sum, scraped every 15 s); settlement MPMC work queue (16 workers, p99 enqueue < 10 µs); 64-worker config snapshot; Meridian porting guide (concurrency section); multi-architecture test policy | 14.1–14.5 |
+| merchant-notify | Pushes payment/refund/payout events to merchant dashboards and POS terminals; ~600,000 concurrent connections at peak, >95% idle; Java on Netty today: 24 pods × ~25,000 connections; Rust pilot (2026) targets 100,000 per pod | 12.1, README |
+| merchant-notify 2019 reconnect storm (Java) | Blocking sockets, thread per connection, ~8,000 connections per pod; terminal firmware bug reconnected without closing; >30,000 connections per pod; `OutOfMemoryError: unable to create native thread` with 40% heap; real limit `vm.max_map_count`; fixes: per-IP caps + 90 s idle reaping, Netty (2020), admission control | 12.1 §10 |
+| payments-core in-flight coalescing (2026) | Duplicate `POST /charges` with the same key on the same instance now waits for the first attempt (bounded by its deadline) instead of 409; `WaitFor` leaf future; other instances still get 409 | 12.2 §9 |
+| merchant-notify `AckWait` incident (March 2026) | Register-once waker; after moving deliveries into spawned tasks, ~3% of deliveries showed exactly 30 s ACK latency (client resend timeout); fixes: refresh waker, two-waker test, review rule for hand-written futures | 12.2 §10 |
+| merchant-notify future-size budget | `connection_loop` held `[u8; 65536]` + `[u8; 16384]` across awaits: ~80 KiB per connection, RSS ~8 GB at 100,000; fixes: heap buffers starting at 512 B, CI `size_of_val < 2048`, `Box::pin` in debug tests | 12.3 §9 |
+| Marketplace payouts reservation incident | Timeout dropped the payout future between reserve and pay-out; 212 sellers' payouts stuck in "reserved" until next-morning reconciliation; fix: reservation guard with `Drop` | 12.3 §10 |
+| merchant-notify merchant fan-out | Per-merchant `Mutex<Vec<Waker>>` replaced by `tokio::sync::Notify` + per-merchant event sequence numbers; review rules: no hand-written projections in app crates, Miri (SB + TB) in CI for primitives | 12.4 §9 |
+| payments-core `Deadline` incident (February 2026) | `impl<F> Unpin for Deadline<F>` added to satisfy `Pin::new`; later `swap_remove` in a batching `Vec` moved polled futures; `SIGSEGV` in the allocator about once a day per pod; two weeks of investigation; found with Miri + a self-borrowing inner future; fixed with `pin-project-lite` | 12.4 §10 |
+| payments-core simulation executor | Cache fast path (check, await fraud score, record key) double-charged in 183 of 1,000 seeds; v2 reserves first; first simulator lacked wake dedup and took minutes on a 1,000-merchant settlement fan-in | 12.5 §9–§10 |
+| Concurrency-model review (2026) | merchant-notify → Rust async (Tokio); ledger stays on a platform-thread pool (concurrency capped by its DB pool); partner webhook dispatcher (Java, thousands of concurrent outbound calls taking seconds) → Java virtual threads with a per-partner `Semaphore`; fraud feature library stays synchronous (no async) | 12.6 §9 |
+| merchant-notify reconnect-handshake incident (May 2026) | 4 pilot pods at up to 100,000 connections, Tokio multi-thread with 8 workers; ~150 ms password hash inside the async handshake; ~20,000 terminals reconnected to one pod; ≈53 handshakes/s; dashboards drop after 3 missed 5 s heartbeats; pod drained; fixes: `spawn_blocking` behind a 4-permit semaphore, resumption tokens, handshake admission with retry-after + jitter, long-poll guard in load tests | 12.6 §10 |
+| merchant-notify PR #412 | Part XII review capstone: ACK-based at-least-once delivery path with 17 defects; fixed version with injected `Clock`, register-before-send, `Outcome` enum, 5 tests | Part XII review |
+| Webhook dispatcher | Java: platform thread per outbound call; a partner's 40-min outage → ~28,000 threads → `OutOfMemoryError: unable to create native thread`, took healthy partners down. Rust: fixed pool per partner tier (named threads), bounded queue per partner spilling to a durable retry table, `Builder::spawn` errors fail startup, `stack_size(512 KiB)` (measured frame size × 4), pool size by Little's law | 11.1 §9 |
+| Settlement batch upload | Detached uploader thread; `main` returned; upload never ran; partner reconciliation flagged a missing batch next morning; fix: join what you spawn | 11.1 §10 |
+| Merchant-portal report renderer | Design exercise: 300 req/s, ~40 ms ledger I/O + 15 ms PDF CPU, 8 cores | 11.1 §14 |
+| Gateway geo-blocking middleware | `RefCell` cache rejected (E0277) in the shared middleware chain; chose an immutable GeoIP prefix table published with `ArcSwap`; the Java version had shipped with an unsynchronized `HashMap` | 11.2 §9 |
+| Market-data fan-out FeedStats | Rust port: `Cell<u64>` counters + `unsafe impl Sync` ("only a metric"); gap counter under-reported ~half; caught when Miri-in-CI was adopted; fix `AtomicU64` Relaxed + rule: every `unsafe impl Send/Sync` needs a SAFETY comment naming the synchronization | 11.2 §10 |
+| Fraud native scoring engine | Design exercise: thread-affine FFI handle, owner-thread submission | 11.2 §14 |
+| Ingestion pipeline backpressure | Bounded blocking queues between decode→validate→enrich→publish (50,000 events/s × 0.2 s = 10,000 slots); `close()` drives shutdown; `producer_waits` and depth metrics | 11.3 §9 |
+| Account-service balance cache | Java `ReentrantReadWriteLock` nested read ported to std `RwLock` → deadlock every few hours under refresh load; fixes: pass data down, `ArcSwap` snapshots, `read_recursive` as documented exception; review rule "no lock in a helper of a locked type" | 11.3 §10 |
+| Ledger client connection pool | Design exercise: 64 connections, 400 worker threads | 11.3 §14 |
+| Payment-provider config | `static LazyLock<ProviderConfig>` from env; misspelled variable → first request panicked, then every request panicked ("previously been poisoned") → 100% errors until restart; health checks passed; fix: eager config in `main`, pass `Arc<Config>` | 11.4 §10 |
+| Pricing catalog (concurrent) | Design exercise: ~200 MB, 32 quote threads, 50K quotes/s, updates every few seconds | 11.4 §14 |
+| payments-core audit trail | One writer thread owns the durable sink; batches 500 records or 20 ms, one fsync per batch; bounded crossbeam channel of 10,000; `send_timeout(50 ms)` → Transient 503 ("no audit, no charge"); metrics via separate `try_send` drop-and-count channel (`metrics_dropped_total`) | 11.5 §9 |
+| Gateway access-log shipper | Unbounded `mpsc` link; collector 20-min outage; ~7,300 lines/s/pod, ~250 B each, ~2 MB/s/pod heap → OOM kills after ~15 min; fix `bounded(200_000)` (~30 s, ~60 MB) + `try_send` drop-and-count (`access_log_dropped_total`), depth exported | 11.5 §10 |
+| Merchant notification service | Design exercise: ~2,000 events/s, e-mail provider 500 calls/s, 40,000 webhook endpoints, inbox DB write ~2 ms | 11.5 §14 |
+| Settlement reconciliation (parallel) | ~40M records on a peak day; 70 min single-threaded → ~14 min on 8 cores with rayon; partition by merchant (largest ~4% of volume), 8× more partitions than cores, integer sums, sorted mismatches, byte-for-byte comparison on a week of production files | 11.6 §9 |
+| Merchant-portal statement pages | `par_iter` over blocking fetches (30–50 docs, 20–200 ms): p50 better, p99 2.5 s → 9+ s; fix async fetches with a concurrency limit, dedicated rayon pool for CPU work, review rule | 11.6 §10 |
+| Fraud-model backfill | Design exercise: ~1.2B rows, 90 days, daily files of 10–20 GB, 32 cores, 128 GB RAM | 11.6 §14 |
+| Gateway per-route metrics | ~5,000 routes; Mutex<HashMap> → atomics in a startup-built map (hot lines + false sharing) → per-worker single-writer counters (`inc` without `lock`), summed on the 10 s scrape | 11.7 §9 |
+| Risk-limits audit under shard lock | Audit write inside a shard's critical section; network volume fsync stalls 20–50 ms; 16 shards → one stall blocked ~6% of traffic; p99 0.4 ms → 40+ ms; fix: I/O after the guard + compensating rollback; lock hold > 1 ms logs the call site | 11.7 §10 |
+| Session cache (Rust) | Design exercise: 2M sessions, 100K lookups/s, 5K updates/s, 32 threads, "touch" on 60% of lookups, expiry sweep once a minute | 11.7 §14 |
+| Gateway partner-quota tracker | Part XI review capstone: process-wide per-partner quotas per window; PR with 16 defects (over-admission 26–27 of 20, 53 alerts, fail-open default 100, lost billing batch, lock-order inversion, poison → double-panic abort); redesign listing | Part XI review |
+| Gateway workspace unsafe policy | `#![forbid(unsafe_code)]` in gateway-core, gateway-io, gateway bin; only `gateway-proto::headers` may contain unsafe (inline `HeaderBlock<16>` for upstream response headers, capped at 16 by proxy policy); clippy `undocumented_unsafe_blocks` + `missing_safety_doc`; `deny(unsafe_op_in_unsafe_fn)`; CODEOWNERS; Miri nightly; ~120 lines of unsafe module vs ~40,000 lines of gateway code | 15.1 §9 |
+| `HeaderBlock::restore` incident | safe `restore(checkpoint)` added with no `unsafe` keyword; stale checkpoint from a pooled request context → len beyond initialized slots → allocator crashes, once a leaked header value; fix: shrink-only restore that drops; review rule changed to "PRs touching a module that contains unsafe" | 15.1 §10 |
+| Market-data ingest frame parsing | C++-style raw cast proposal rejected (alignment UB + wrong byte order); safe `from_be_bytes` parser adopted for the 8-byte header; `zerocopy` derives approved for larger structures; raw byte-to-struct casts banned in the service's unsafe policy | 15.2 §9 |
+| Risk-limits self-transfer incident | Rust port keeps per-merchant exposure buckets in `Vec<i64>`; hand-written `two_mut` (predates `get_disjoint_mut`) checked bounds, not distinctness; self re-route rule → two `&mut` → release reported headroom 30 lower than stored → spurious declines; found by daily reconciliation; fix: `get_disjoint_mut` + explicit `i == j` no-op, Miri in both models, ban on hand-written disjointness code | 15.2 §10 |
+| Gateway pooled read buffers | 16 KiB pooled buffers; `memset` from `clear()+resize()` seen in a profile; `set_len` PR rejected (UB + ~115 ns per read ≈ 0.02% of ~500 µs CPU/request); shipped `PooledBuf` kept initialized (zeroed once), exposing only `[..filled]`; test that a short read after a long one leaks no stale bytes | 15.3 §9 |
+| payments-core warm-up leak | fixed per-worker set of card-processor connections built in a `MaybeUninit` array; processor maintenance → 3rd connect failed → `expect` panic caught by the task supervisor, retried every few seconds; each attempt leaked 2 open connections (no Drop); processor's per-client connection limit filled; outage outlasted maintenance until a rolling restart; fix: drop guard, then a safe `Vec` + `?` + `try_into()` rewrite that removed the unsafe | 15.3 §10 |
 
 **Ferrite** (the reader's own system) starts at Project Level 4 (Part XI); its v1–v5 contract is in `notes/AUTHORING-BRIEF.md`.
 

@@ -105,28 +105,28 @@
 
 # Part XI — Concurrency
 
-- [Part XI Overview]()
-  - [11.1 Threads and the OS]()
-  - [11.2 Send and Sync]()
-  - [11.3 Arc, Mutex, RwLock, and Condvar]()
-  - [11.4 Interior Mutability: Cell, RefCell, OnceCell, UnsafeCell]()
-  - [11.5 Channels and Message Passing]()
-  - [11.6 Scoped Threads and Data Parallelism with Rayon]()
-  - [11.7 The Concurrency Decision Matrix]()
-  - [Project Level 3: A Multithreaded HTTP Server from Raw TCP]()
-  - [Project Level 4: A Concurrent Key-Value Store (Ferrite v1)]()
-  - [Part XI Review]()
+- [Part XI Overview](part-11-concurrency/README.md)
+  - [11.1 Threads and the OS](part-11-concurrency/ch01-threads-and-the-os.md)
+  - [11.2 Send and Sync](part-11-concurrency/ch02-send-and-sync.md)
+  - [11.3 Arc, Mutex, RwLock, and Condvar](part-11-concurrency/ch03-arc-mutex-rwlock-condvar.md)
+  - [11.4 Interior Mutability: Cell, RefCell, OnceCell, UnsafeCell](part-11-concurrency/ch04-interior-mutability.md)
+  - [11.5 Channels and Message Passing](part-11-concurrency/ch05-channels.md)
+  - [11.6 Scoped Threads and Data Parallelism with Rayon](part-11-concurrency/ch06-scoped-threads-rayon.md)
+  - [11.7 The Concurrency Decision Matrix](part-11-concurrency/ch07-decision-matrix.md)
+  - [Project Level 3: A Multithreaded HTTP Server from Raw TCP](part-11-concurrency/project-03-http-server.md)
+  - [Project Level 4: A Concurrent Key-Value Store (Ferrite v1)](part-11-concurrency/project-04-ferrite-v1.md)
+  - [Part XI Review: The Partner-Quota PR & Interview Mode](part-11-concurrency/review.md)
 
 # Part XII — Async Rust
 
-- [Part XII Overview]()
-  - [12.1 Why Async Exists: From C10K to C10M]()
-  - [12.2 The Future Trait and poll]()
-  - [12.3 async fn Becomes a State Machine]()
-  - [12.4 Pin and Self-Referential Futures]()
-  - [12.5 Wakers and Executors: Build One from Scratch]()
-  - [12.6 OS Threads vs Green Threads vs Async Tasks]()
-  - [Part XII Review]()
+- [Part XII Overview](part-12-async/README.md)
+  - [12.1 Why Async Exists: From C10K to C10M](part-12-async/ch01-why-async.md)
+  - [12.2 The Future Trait and poll](part-12-async/ch02-future-poll.md)
+  - [12.3 async fn Becomes a State Machine](part-12-async/ch03-async-state-machine.md)
+  - [12.4 Pin and Self-Referential Futures](part-12-async/ch04-pin.md)
+  - [12.5 Wakers and Executors: Build One from Scratch](part-12-async/ch05-wakers-executors.md)
+  - [12.6 OS Threads vs Green Threads vs Async Tasks](part-12-async/ch06-threads-green-async.md)
+  - [Part XII Review: The merchant-notify PR & Interview Mode](part-12-async/review.md)
 
 # Part XIII — Tokio and Production Async
 
@@ -151,10 +151,10 @@
 
 # Part XV — Unsafe Rust
 
-- [Part XV Overview]()
-  - [15.1 What unsafe Means: Soundness and Invariants]()
-  - [15.2 Raw Pointers, Provenance, and Aliasing Models]()
-  - [15.3 MaybeUninit, ManuallyDrop, and UnsafeCell]()
+- [Part XV Overview](part-15-unsafe/README.md)
+  - [15.1 What unsafe Means: Soundness and Invariants](part-15-unsafe/ch01-soundness-invariants.md)
+  - [15.2 Raw Pointers, Provenance, and Aliasing Models](part-15-unsafe/ch02-raw-pointers-provenance.md)
+  - [15.3 MaybeUninit, ManuallyDrop, and UnsafeCell](part-15-unsafe/ch03-maybeuninit-manuallydrop-unsafecell.md)
   - [15.4 Building a Safe Abstraction: Implementing Vec<T>]()
   - [15.5 Custom Allocators]()
   - [15.6 Verifying unsafe: Miri, Sanitizers, and Loom]()
@@ -303,6 +303,9 @@
   - [Part VIII Answers](appendix/answers-part-08.md)
   - [Part IX Answers](appendix/answers-part-09.md)
   - [Part X Answers](appendix/answers-part-10.md)
+  - [Part XI Answers](appendix/answers-part-11.md)
+  - [Part XII Answers](appendix/answers-part-12.md)
   - [Part XIV Answers](appendix/answers-part-14.md)
+  - [Part XV Answers (15.1–15.3)](appendix/answers-part-15.md)
 - [B. Glossary]()
 - [C. Sources and Further Reading]()
