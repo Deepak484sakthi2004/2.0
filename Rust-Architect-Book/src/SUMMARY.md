@@ -184,15 +184,15 @@
 
 # Part XVIII — How rustc Works
 
-- [Part XVIII Overview]()
-  - [18.1 rustc's Architecture: Queries and Incremental Compilation]()
-  - [18.2 Macro Expansion, Name Resolution, and HIR Lowering]()
-  - [18.3 Type Checking and Trait Solving]()
-  - [18.4 THIR and MIR]()
-  - [18.5 Borrow Checking on MIR]()
-  - [18.6 Monomorphization and Codegen Backends (LLVM, Cranelift)]()
-  - [18.7 Tracing `let x = foo();` Through the Compiler]()
-  - [Part XVIII Review]()
+- [Part XVIII Overview](part-18-rustc/README.md)
+  - [18.1 rustc's Architecture: Queries and Incremental Compilation](part-18-rustc/ch01-queries-incremental.md)
+  - [18.2 Macro Expansion, Name Resolution, and HIR Lowering](part-18-rustc/ch02-expansion-resolution-hir.md)
+  - [18.3 Type Checking and Trait Solving](part-18-rustc/ch03-typeck-trait-solving.md)
+  - [18.4 THIR and MIR](part-18-rustc/ch04-thir-mir.md)
+  - [18.5 Borrow Checking on MIR](part-18-rustc/ch05-borrowck-mir.md)
+  - [18.6 Monomorphization and Codegen Backends (LLVM, Cranelift)](part-18-rustc/ch06-mono-codegen.md)
+  - [18.7 Tracing `let x = foo();` Through the Compiler](part-18-rustc/ch07-tracing-let-x.md)
+  - [Part XVIII Review: The Compiler Detective & Interview Mode](part-18-rustc/review.md)
 
 # Part XIX — Binary, Linker, and OS
 
@@ -307,5 +307,6 @@
   - [Part XII Answers](appendix/answers-part-12.md)
   - [Part XIV Answers](appendix/answers-part-14.md)
   - [Part XV Answers (15.1–15.3)](appendix/answers-part-15.md)
+  - [Part XVIII Answers](appendix/answers-part-18.md)
 - [B. Glossary]()
 - [C. Sources and Further Reading]()

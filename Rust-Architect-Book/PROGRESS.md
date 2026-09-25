@@ -1,6 +1,7 @@
 # Progress & Continuity Ledger
 
-Last updated: 2026-09-25 (Parts I–XII and XIV complete; XV partial (15.1–15.3); XVII, XVIII in progress) · Baseline: Rust 1.98.1 stable, edition
+Last updated: 2026-09-25 (Parts I–XII, XIV, XVIII complete; XV partial (15.1–15.3); XIII, XVI, XVII, XIX, XX in
+progress) · Baseline: Rust 1.98.1 stable, edition
 2024 (Playground-verified)
 Published to: https://github.com/Deepak484sakthi2004/2.0 (folder `Rust-Architect-Book/`)
 
@@ -27,10 +28,47 @@ need: concepts, promises, and Meridian facts.
 | XII | Async Rust | **Written** (6 chapters + review capstone + answer key) | 59 files / 75 checks (incl. 12 Miri), all pass |
 | XIV | Memory Model and Atomics | **Written** (5 chapters + review capstone + answer key) | 38 files / 62 checks (incl. 25 Miri), all pass |
 | XV | Unsafe Rust | **Partial**: 15.1–15.3 + overview + answers for 15.1–15.3 written. 15.4–15.6 and the review are **not written**: three writer attempts were stopped by a safety classifier (see `notes/part-15b-report.md`); 15.4's listings exist and are verified | 73 files / 120 checks (incl. 15.4's 15 files / 22 checks), all pass |
-| XVII, XVIII | Compilers · rustc | In progress | — |
-| XIII, XVI, XIX–XXVI | … | Planned (see `src/SUMMARY.md`) | — |
+| XVIII | How rustc Works | **Written** (7 chapters + review capstone + answer key) | 68 files / 80 checks (13 on nightly), all pass |
+| XIII, XVI, XVII, XIX, XX | Tokio (L5) · FFI · Compilers · Binary/OS · Performance | In progress | — |
+| XXI–XXVI | … | Planned (see `src/SUMMARY.md`) | — |
 
 All listing counts were re-verified by the integrator after each writer finished (independent `tools/verify.ps1` run).
+
+## Part XVIII concepts introduced
+
+| Concept | Where | Full treatment planned |
+|---|---|---|
+| rustc as memoized, dependency-tracked queries (`TyCtxt`); demand-driven; E0391 cycle notes are the query stack | 18.1 | — |
+| Error gating verified: per-body independence; type error suppresses same-body borrowck; privacy/lints behind crate-wide gate; post-mono only in full builds | 18.1 | — |
+| DefId (session) vs DefPathHash (stable); `#[rustc_dump_def_parents]`; red-green, fingerprints, early cutoff; CGU work-product reuse | 18.1 | — |
+| Parallel front end `-Z threads` (2023 announcement, hedged); 1.52.1 incremental disable episode | 18.1 | XX |
+| Expansion ⟷ resolution fixpoint; mixed-site hygiene table (verified 22-vs-6 demo, E0425 with hygiene note); `$crate`; expanded output ≠ source | 18.2 | XXVI |
+| Real HIR of `for`, `?`, `while let`, `async fn`, `.await`, ranges, let chains, `format_args!` (pre-encoded template, `super let`); lang items | 18.2 | — |
+| Proc macros = host dylibs loaded by rustc; build-time code execution; critical path; E0659 glob ambiguity | 18.2 | XIX, XXII |
+| Items declared / bodies inferred; `typeck` results; obligations, fulfillment, candidates → winnow → confirm; canonicalization | 18.3 | — |
+| `#[rustc_evaluate_where_clauses]`: EvaluatedToOk vs EvaluatedToAmbig (verified); E0277 read bottom-up; E0275 overflow and long-type file | 18.3 | — |
+| Never-type fallback: `!` in 2024 (E0277 `!: Default`), deny lint `dependency_on_unit_never_type_fallback` in 2021 (verified) | 18.3 | — |
+| Method probe order; `use std::borrow::Borrow` breaks `RefCell::borrow` (E0282, verified); next-gen trait solver status (1.84 coherence, hedged) | 18.3 | — |
+| Typeck dumps: `rustc_capture_analysis`, `rustc_dump_item_bounds` (implicit Sized), `rustc_dump_hidden_type_of_opaques` | 18.3 | — |
+| THIR: explicit adjustments/overloaded ops; exhaustiveness + unsafety (E0133) run on THIR; `-Zunpretty=thir-tree` (unverified) | 18.4 | — |
+| MIR vocabulary table; debug vs release MIR of a `match` (MIR inliner, `assume(len <= isize::MAX)`, storage markers only in release) | 18.4 | — |
+| `let _ =` drop proven in MIR; `match` scrutinee guard lives to end of match (MIR + `try_lock` demo; 2024 `if let` doesn't help, verified) | 18.4 | — |
+| `#[must_use]` silenced by `let _ =` (help text suggests it, verified); allow-by-default `let_underscore_drop` (verified) | 18.4 | — |
+| MIR pipeline (built → promoted → borrowck → drop elaboration → optimized / mir_for_ctfe); RFC 3027 infallible promotion | 18.4 | — |
+| Const eval = MIR interpreter shared with Miri: invalid `bool` E0080 (verified); `const _: () = assert!` build-time validation; deny-by-default `long_running_const_eval` (verified) | 18.4 | XV.6 |
+| Borrowck pipeline: renumber → MIR type check → liveness (drop-live) → region inference (sets of points, SCCs) → dataflow; universal vs existential regions | 18.5 | — |
+| Verified: dead code still borrow-checked (E0499 in `if false`); empty `Drop` extends loans (E0502 "when `span` is dropped"); two-phase only for autoref receivers etc. (`Vec::push(&mut v, v.len())` and `(&mut v).push(..)` E0502) | 18.5 | — |
+| `#[rustc_regions]` closure external requirements (`where '?1: '?3`); closure args list | 18.5 | — |
+| Problem case #3: E0502 on stable 1.98.1 and beta 1.99.0-beta.7, **accepted on nightly 1.100.0 (2026-09-24) with no flags** [VERSION] | 18.5 | XXVI |
+| Adding `Drop` / lifetime params / `&mut self` / wider RPIT capture as breaking changes via borrowck | 18.5 | XXII |
+| Collector roots/edges, instance kinds (shims), shared generics, `#[inline]` local copies, CGU partitioning, `rustc_codegen_ssa` | 18.6 | — |
+| `#[rustc_abi(debug)]`: release `NoAlias`/`ReadOnly`/`NonNull`..., debug only `NonNull | NoUndef`; debug IR has only `align` (verified); noalias chain borrowck → ABI → IR → one load | 18.6 | — |
+| `#[rustc_dump_symbol_name]` (v0, crate disambiguator hash, `p` placeholder for uninstantiated generics); `#[rustc_dump_vtable]` (default methods included; supertrait methods first); `#[rustc_dump_layout(debug)]` | 18.6 | — |
+| LLVM function merging: `fee::<Wallet> = fee::<Card>` alias; `fn_addr_eq` false (debug) / true (release); `unnamed_addr`; lint `unpredictable_function_pointer_comparisons` (verified) | 18.6 | XX |
+| Pass modes Ignore/Direct/Pair/Cast/Indirect (sret); Cranelift (nightly component) and GCC backends (unverified, [VERSION]) | 18.6 | XX |
+| GraalVM Native Image reachability vs rustc collector | 18.6 | — |
+| Full trace of `let x = foo();`: expand (prelude injection), HIR (`#[attr = Inline(Never)]`), typeck probe, debug/release MIR, 18 vs 3 IR functions (incl. debug UB precondition checks), IR (`sret`, `invoke`/`landingpad`, `range` return attr), asm (cap/ptr/len at rsp, "meridian" as a 64-bit immediate, len kept in rbx) | 18.7 | XIX |
+| Artifact-choice table: debug artifacts for semantics, release for performance | 18.4, 18.7 | XX |
 
 ## Part XV concepts introduced
 
@@ -635,20 +673,25 @@ with the chapter that made the promise in parentheses.
   guarantees, `repr(C)` enums (RFC 2195) (5.2, 6.5); loading a `cdylib` plugin with the C-ABI vtable of 6.5; the fraud
   library's thread-affine native scoring handle and the owner-thread design (11.2); `unsafe extern` blocks with `safe`
   items in real bindings (15.1); `Vec::into_raw_parts`/`from_raw_parts` and `Box::into_raw` across the C boundary
-  (15.3); exposed provenance for addresses from C (15.2).
+  (15.3); exposed provenance for addresses from C (15.2); `repr(C, u32)` enums and explicit encodings at boundaries,
+  `conv: Rust` vs `extern "C"` in the ABI dump (18.6).
 - **Part XVII (Compilers):** SSA/φ/register allocation deepened (2.3); type inference by unification (2.3); Java
   definite assignment as dataflow (4.2); LICM hoisting, loop → `memcpy`, loop collapse and their data-race-freedom
   license (14.x, from the compiler's side; also XVIII); closure compilation of an interpreter (10.1 benchmark).
-- **Part XVIII (rustc):** trait solver, intercrate mode, vtable layout internals (6.3, 6.4); monomorphization collector,
-  CGU partitioning, shared generics, LLVM function merging, Cranelift, `-Z self-profile`/`-Z time-passes` (7.1, 7.3);
-  exhaustiveness/match lowering on THIR/MIR (2.5, 5.1); `?` in MIR (8.1); borrow checking on MIR, Polonius (4.2);
-  post-monomorphization errors (7.1); privacy phases (2.7); coroutine MIR state transform, prefix/overlap layout, and
-  `async fn` arguments stored twice (12.3, measured 64 B vs ~32 B expected); `getelementptr inbounds nuw` from
-  `ptr::add` and LLVM merging identical functions (15.2).
+- ~~**Part XVIII (rustc):** trait solver, vtable layout, collector/CGUs/shared generics/function merging/Cranelift,
+  exhaustiveness and match lowering, `?` desugaring, borrowck on MIR and Polonius status, post-mono errors, privacy
+  phases, drop elaboration, `noalias`, queries/incremental, hygiene, HIR desugarings, `let x = foo();` traced,
+  `getelementptr inbounds nuw`~~ **KEPT** (18.1–18.7). **Gaps:** the coroutine MIR state transform, prefix/overlap
+  layout, and `async fn` arguments stored twice (12.3 → 18.4) were not covered (18.2 shows only the HIR side of async
+  lowering); "intercrate mode" appears only via the next-gen solver (18.3). **New fact:** NLL problem case #3 is
+  rejected on stable 1.98.1 and beta but **accepted on nightly 1.100** with no flag (18.5, verified), so Chapter 4.2's
+  statement is true for stable and the change is coming.
 - **Part XIX (Binary/OS):** mmap input for logstat; linking in depth (2.1); unwind tables (`.eh_frame`, LSDA) and
   backtrace symbolization (8.2, 8.3); exit statuses (8.3); freed memory vs RSS (3.1); guard pages and stack probes
   (Interlude); musl static linking (2.1); `strace` of thread spawn (`clone`, `mmap`, `munmap`), thread-stack virtual
-  memory, futex syscalls (11.1, 11.3, 11.7); canonical addresses and pointer tagging (TBI/LAM) (15.2).
+  memory, futex syscalls (11.1, 11.3, 11.7); canonical addresses and pointer tagging (TBI/LAM) (15.2); GOT-relative
+  calls and relaxation, v0 symbols and demangling, `lang_start`, the `personality` routine, allocator shims, proc macros
+  as `dlopen`ed host dylibs, `split-debuginfo`/`strip` (18.2, 18.6, 18.7).
 - **Part XX (Performance):** PGO/BOLT (2.2, 7.2); runtime CPU feature detection (2.1); opt-level 2 vs 3; atomic/mutex/
   no-sharing ranking (1.3); the gateway benchmark; false sharing (5.2); tagged vs niche in memory (5.2); AoS/SoA and
   hot-cold splitting (5.2, 9.5); `perf stat -e branch-misses` for dispatch (6.5); pointer chasing, i-cache, chunked f64
@@ -659,7 +702,9 @@ with the chapter that made the promise in parentheses.
   `perf stat -e context-switches,cpu-migrations` on the ping-pong, allocator effects on per-task memory (12.6);
   lock wait/hold-time measurement, `perf sched`, off-CPU flame graphs, `perf c2c` (11.7); thread pinning and placement,
   NUMA and thread-per-core (11.1, 11.7); `RwLock` vs `Mutex` shards for large Ferrite values; `wrk` load curves for L3;
-  `noalias` benefits in loops, zeroing cost vs buffer size (15.2, 15.3).
+  `noalias` benefits in loops, zeroing cost vs buffer size (15.2, 15.3); `-Z self-profile`/`--timings` on trait- and
+  generic-heavy crates, `-Z merge-functions=disabled` for profile attribution, Cranelift vs LLVM build time,
+  release-profile experiments, artifact-regression CI check, `-Z threads` (18.x).
 - **Part XXI (Networking):** harden the Meridian gateway (Part I review); timeouts, retries, circuit breakers, retry
   budgets, deadline propagation (8.4); HashDoS and network input (9.3); Netty ByteBuf analogy (4.3, 4.5); io::ErrorKind
   by connection phase (8.4); owned-buffer completion I/O (io_uring) for servers, socket-buffer tuning at scale (12.1);
@@ -673,7 +718,10 @@ with the chapter that made the promise in parentheses.
   serde_json recursion limit (Interlude); concurrency testing in CI: loom (`cfg(loom)`), TSan, Miri seeds, aarch64
   stress runners (14.x → 22.7); deterministic simulation testing (turmoil, madsim) and Miri in CI (12.5); publishing
   `WorkerPool` as a crate (L3 review Q7, 22.1); Tower (22.3); `cargo-semver-checks` for lost auto traits (11.2); a
-  binary-safe framing for Ferrite (L4 omissions → Project L6).
+  binary-safe framing for Ferrite (L4 omissions → Project L6); proc-macro allowlist and `cargo expand` (18.2);
+  compile-time SQL checking trade-off (18.2 → 22.4); Tower `BoxService` to cap type depth (18.3 → 22.3); `cargo test
+  --release` in CI and reverse-dependency builds for shared crates (18.5, 18.6 → 22.7); semver checks for `Drop` and
+  lifetime additions.
 - **Part XXIII (Storage):** transaction guard → real transactions (3.5); commit with unknown outcome (8.3); persistent
   encodings instead of in-memory layout, padding (5.2); DB compare-and-set for state transitions (5.4); Ferrite v3
   `FerriteError` and a fallible store API (8.2 design exercise: reconcile with the brief's contract by adding a
@@ -686,7 +734,9 @@ with the chapter that made the promise in parentheses.
   `RandomState` routing with a stable hash or range partitioning behind a versioned partition map (L4 §2); the leader
   executes read-modify-writes and replicates results; partitioning large state (11.7 §5).
 - **Part XXVI (Language):** specialization and language-design trade-offs (6.3); `#[non_exhaustive]` and exhaustiveness
-  (5.1).
+  (5.1); mirror rustc's architecture in the toy compiler (queries/HIR/MIR stages as the reference design, borrow
+  checking on a MIR-like IR in 26.5–26.6); local type inference, hygiene, and Polonius-style analyses as language-design
+  choices (18.x); optionally the coroutine state transform left open by XVIII (12.3).
 
 ## Running case study: Meridian (fictional)
 
@@ -863,6 +913,23 @@ Payments-and-marketplace company; mostly Java, one C++ team, Go tooling. Systems
 | Risk-limits self-transfer incident | Rust port keeps per-merchant exposure buckets in `Vec<i64>`; hand-written `two_mut` (predates `get_disjoint_mut`) checked bounds, not distinctness; self re-route rule → two `&mut` → release reported headroom 30 lower than stored → spurious declines; found by daily reconciliation; fix: `get_disjoint_mut` + explicit `i == j` no-op, Miri in both models, ban on hand-written disjointness code | 15.2 §10 |
 | Gateway pooled read buffers | 16 KiB pooled buffers; `memset` from `clear()+resize()` seen in a profile; `set_len` PR rejected (UB + ~115 ns per read ≈ 0.02% of ~500 µs CPU/request); shipped `PooledBuf` kept initialized (zeroed once), exposing only `[..filled]`; test that a short read after a long one leaks no stale bytes | 15.3 §9 |
 | payments-core warm-up leak | fixed per-worker set of card-processor connections built in a `MaybeUninit` array; processor maintenance → 3rd connect failed → `expect` panic caught by the task supervisor, retried every few seconds; each attempt leaked 2 open connections (no Drop); processor's per-client connection limit filled; outage outlasted maintenance until a rolling restart; fix: drop guard, then a safe `Vec` + `?` + `try_into()` rewrite that removed the unsafe | 15.3 §10 |
+| Rust build policy | All Rust codebases pinned to 1.98.1; dev incremental on; PR CI `CARGO_INCREMENTAL=0`, caches registry + compiled deps keyed on `Cargo.lock` + toolchain; nightly full `--release` build gates the release train; `--timings` then `-Z self-profile` for slow crates | 18.1 §9 |
+| CI cache incident (early 2026) | Whole `target/` cached keyed on branch name with incremental on; tens of GB in two months; mostly misses; nightly fuzzing job hit an unstable-fingerprint ICE; policy replaced | 18.1 §10 |
+| Macro policy | Proc-macro/`build.rs` allowlist (serde, thiserror, tracing, clap pre-approved); PRs paste expansions of hot/security-sensitive derives; `--timings` tracks proc-macro crates; gateway workspace consolidated three `syn` major versions to one | 18.2 §9 |
+| Audit-macro PAN leak | `macro_rules! audit` called bare `mask` (call-site resolution); refunds module's own `mask` returned the full PAN; six days of refund audit lines with full card numbers; DLP scan found it; logs purged; fix `$crate::audit::mask`; rule: every macro path is a parameter or `$crate::`, collision tests | 18.2 §10 |
+| payments-core edition-2024 migration | `cargo fix` applied `::<()>` at 11 call sites; 2 were startup validations `settings::load()?` with a `FromEnv` impl for `()`, validating nothing for ~a year; fixed to `load::<PaymentsConfig>()`; rules on generic effect-only calls | 18.3 §9 |
+| Partner-API edge middleware | Recursive `Stack<Metered<L>>` where-clause; E0275 at layer 5; `recursion_limit = "512"` made `cargo check` take minutes; layer 6 timed out CI; fix: wrap once at construction + `BoxService` split; never raise `recursion_limit` without design review | 18.3 §10 |
+| payments-core fee tiers | Standard tier table as `const FEE_TIERS` with `const` assertions (ordering, 0–1,000 bps, first tier at 0); per-merchant negotiated rates stay in the DB with load-time validation; reviewers ask for debug MIR on "when" questions | 18.4 §9 |
+| Payouts service (Rust, 2026) | Pays marketplace sellers; scheduler on 3 replicas; DB lease per seller (compare-and-set) released in `Drop`, `#[must_use]`; `let _ = leases.acquire(seller_id)?;` refactor → double payouts when schedules overlapped; bank idempotency keys caught most, a few retries with new keys went through; found by reconciliation 2 days later; fixes: `let _lease`, helper takes `&Lease`, CI enables `let_underscore_drop`, server-side lease expiry + check before transfer | 18.4 §10 |
+| Settlement batcher retry path | Debugging exercise: `match m.lock().unwrap().status` held the guard through `bump`, which locked again (deadlock in production, intermittent on status 0) | 18.4 §13 |
+| Nightly canary job | Weekly workspace build/test on latest nightly, allowed to fail; saw problem case #3 accepted; `// NLL-LIMITATION: problem case #3` markers; no code changes for nightly-only acceptance; borrowck compile-fail tests moved to the canary | 18.5 §9 |
+| `meridian-telemetry` 2.4.0 `Drop` incident | Minor release added `impl Drop for Span<'_>`; 9 of the 30 dependent services failed to build (E0502 "when `span` is dropped"); yanked; 3.0.0 stores `Arc<str>` names (no lifetime), keeps the `Drop` backstop; checklist + reverse-dependency CI builds | 18.5 §10 |
+| payments-core profiling note | Wallet-only load test flame graph showed `fee::<Card>` (merged with `fee::<Wallet>`, both 290 bps); runbook: merged symbols stand for all merged functions | 18.6 §9 |
+| Webhook intake chargeback incident | Dispute-notification registry deduplicated handlers by `fn_addr_eq` (the lint's suppression hint); placeholder `ack_refund`/`ack_chargeback` merged in release; chargebacks fell to an "unknown event" path returning 200; several late dispute responses; fixes: key on event kind, error on duplicates, `cargo test --release` in the nightly job, unknown events alert | 18.6 §10 |
+| Market-data shared-memory ring | Debugging exercise: `Reply` enum bytes copied to a C++ consumer declared with a `u32` tag; tag 0x2A00 symptoms; fix `repr(C, u32)` or explicit encoding | 18.6 §13 |
+| Artifact-backed performance reviews | Gateway and payments-core: PRs claiming hot-path effects attach the right artifact (counting-allocator test or release asm for allocations, release asm for dispatch/inlining, debug MIR for drop/lock timing) | 18.7 §9 |
+| Market-data frame encoder length cache | Cached `len` parameter added after reading debug MIR/IR; later `push_str` made the length prefix short; ~1 in 400 frames truncated downstream; fixes: remove cached length, release-artifact rule, property test on prefix | 18.7 §10 |
+| Ledger client (capstone) | `post` with `ensure!`, `?`, `&mut dyn Sink` journal with `Drop`; three build tickets (alias cycle, removed braces E0499, merged `to_major` in release) | Part XVIII review |
 
 **Ferrite** (the reader's own system) starts at Project Level 4 (Part XI); its v1–v5 contract is in `notes/AUTHORING-BRIEF.md`.
 
