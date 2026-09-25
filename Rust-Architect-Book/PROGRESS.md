@@ -1,6 +1,6 @@
 # Progress & Continuity Ledger
 
-Last updated: 2026-09-25 (Part III complete) · Baseline: Rust 1.98.1 stable, edition 2024 (Playground-verified)
+Last updated: 2026-09-25 (Part IV complete) · Baseline: Rust 1.98.1 stable, edition 2024 (Playground-verified)
 Published to: https://github.com/Deepak484sakthi2004/2.0 (folder `Rust-Architect-Book/`)
 
 ## Status
@@ -11,8 +11,38 @@ Published to: https://github.com/Deepak484sakthi2004/2.0 (folder `Rust-Architect
 | I | Why Rust Exists | **Written** (4 chapters + review + answer key) | 26 files / 27 checks, all pass |
 | II | Rust From First Principles | **Written** (7 chapters + Project L1 `logstat` + review + answer key) | 39 files / 44 checks, all pass |
 | III | Ownership: The Core of Rust | **Written** (6 chapters + Project L2 `redact` + review + answer key) | 38 files / 44 checks, all pass |
-| IV | The Borrow Checker | Next | — |
-| V–XXVI | … | Planned (see `src/SUMMARY.md`) | — |
+| IV | The Borrow Checker | **Written** (6 chapters + review capstone + answer key; no project by design) | 34 files / 36 checks (incl. 2 Miri), all pass |
+| V | Types as Architecture | Next | — |
+| VI–XXVI | … | Planned (see `src/SUMMARY.md`) | — |
+
+## Part IV concepts introduced
+
+| Concept | Where | Full treatment planned |
+|---|---|---|
+| Places/projections, loans (place, kind, region), conflict table incl. prefixes/extensions; E0503 | 4.1 | XVIII.5 |
+| `&mut` = unique, `&` = shared; UnsafeCell as sole primitive; Cell/RefCell/OnceCell/Mutex/atomics table | 4.1 | XI, XIV, XV |
+| Verified IR/asm: `&i32` noalias readonly (add eax,eax) vs `&Cell<i32>` no noalias (reload); black_box = empty inline asm | 4.1 | — |
+| Iterator invalidation (E0502) + fixes (collect/extend, retain, index loop); remove-in-index-loop panic (verified) | 4.1 | IX |
+| `balances[_]` E0499 with split_at_mut help; get_disjoint_mut (stable ≥1.86; OverlappingIndices/IndexOutOfBounds) | 4.1 | — |
+| Cell !Sync E0277 with compiler note suggesting RwLock/AtomicU32 | 4.1 | XI.2 |
+| NLL history (2018/1.31, all editions 1.36, migrate removed 1.63); liveness per path; 5-step algorithm | 4.2 | XVIII.5 |
+| Reborrow stack; generic T moves &mut (E0382 + "consider creating a fresh reborrow") | 4.2 | — |
+| Problem case #3 still E0502 on 1.98.1 (verified); Polonius explanation; entry API (1 lookup) | 4.2 | IX.3 |
+| Two-phase borrows; Java definite assignment as same dataflow family | 4.2 | XVII.6 |
+| Lifetime params = caller-chosen regions; annotations relate; elision 3 rules; `'_`; T:'static vs &'static | 4.3 | — |
+| Tokenizer<'a> tokens outlive &mut self vs elided E0499 (verified) | 4.3 | — |
+| E0373 thread::spawn borrow + move fix; lifetimes erased/not monomorphized; universal regions; implied bounds | 4.3 | VII, XVIII |
+| Box::leak for 'static per request: measured 1000 blocks leaked / 1000 calls | 4.3 | — |
+| Decoded earlier signatures table (parse_header, Record<'a>, find, Tx<'db>, redact<'a>, longest) | 4.3 | — |
+| Variance table (Reference); overwrite invariance E0597 "type annotation requires ... 'static"; fn contravariance; E0308 "one type is more general" | 4.4 | V.3 (PhantomData) |
+| Variance inference from fields; PhantomData steering; #25860 = implied bounds + fn variance | 4.4 | XV |
+| Java covariant arrays/ArrayStoreException; PECS use-site vs Rust declaration-site | 4.4 | VI, VII |
+| HRTB for<'a>; caller-chosen lifetime E0597; E0521 escape (notes cite invariance); closure return-ref "lifetime may not live long enough"; fn item / HRTB-bound inference fixes | 4.5 | VI, X.1 |
+| DeserializeOwned = for<'de> Deserialize<'de>; lending iterators impossible with std Iterator; GATs 1.65 | 4.5 | XXII.2, X |
+| Netty ByteBuf use-after-release analogy | 4.3, 4.5 | XXI |
+| A–B–C method; error-code translation table; five fix strategies; diagnostics "best blame" | 4.6 | — |
+| E0716 vs temporary lifetime extension (`let x = &temp`); E0384 expression-style fix | 4.6 | — |
+| unsafe silencing E0502: runs & prints 1 natively, Miri reports dangling reference UB (verified); safe version miri-ok | 4.6 | XV.6 |
 
 ## Part III concepts introduced
 
@@ -144,10 +174,17 @@ Published to: https://github.com/Deepak484sakthi2004/2.0 (folder `Rust-Architect
 - ~~**Part II:** `let x = 10`, debug vs release, profiles, Windows toolchain setup~~ **KEPT** (2.1–2.3).
 - ~~**Part III:** move/copy/clone String diagram, graphs, stable address, Project L2~~ **KEPT** (3.1–3.6, `redact`).
   (`for x in vec` vs `&vec` covered in 2.5 answer key; revisit in X.)
-- **Part IV:** reading every borrow-checker error as an ownership proof (promised in 1.1); how the compiler knows a
-  returned sub-slice can't outlive its input (2.4 header parser); explain `longest<'a>` (3.3), `Record<'a>` (L1),
-  `Tx<'db>` (3.5), `redact<'a>` returning `Cow<'a, str>` (L2); reborrow nesting (3.3); drop check / `#[may_dangle]`
-  (3.5); partial moves + E0509 (3.2 answers).
+- ~~**Part IV:** errors as proofs, sub-slice lifetimes, longest/Record/Tx/redact signatures, reborrow nesting~~
+  **KEPT** (4.1–4.6). Still open from that list: drop check / `#[may_dangle]` (mentioned 3.5) → Part XV;
+  partial moves + E0509 → covered only in 3.2 answer key.
+- **Part V:** PhantomData variance steering (promised 4.4); type-state for payment state machine (2.5, 4.x);
+  newtypes (Percent/BasisPoints 2.2, TenantId Part II review, OrderId/Price Part III review).
+- **Part VI:** auto-deref via Deref (3.4 deref coercion); AsRef/Into parameter flexibility (3.3); dyn Trait variance.
+- **Part IX:** HashMap internals behind entry API (4.2); retain/drain complexity (4.1).
+- **Part XI:** Cell→atomics transition (4.1 production scenario); Arc swap for catalogs (3.3 design).
+- **Part XV:** Stacked/Tree Borrows (4.2, 4.6 exercise), Miri in CI, #[may_dangle], soundness of split_at_mut /
+  get_disjoint_mut internals.
+- **Part XXII:** serde zero-copy with Cow<'a, str> and DeserializeOwned (4.3 design exercise, 4.5).
 - **Part V:** niches in depth (promised in 1.2's `Option<u64>` = 16 bytes, deepened in 2.6); type-state (Rust once had
   built-in typestate — mention in 5.4; payment state machine promised to move to type-state in 2.5, order lifecycle
   design exercise 2.5); newtypes `Percent`/`BasisPoints` (2.2 failure), `TenantId` (Part II review), "parse, don't
@@ -211,6 +248,19 @@ Payments-and-marketplace company; mostly Java, one C++ team, Go tooling. Systems
 | In-process event bus | RefCell reentrancy panic on user.created + closure Rc cycle | 3.6 |
 | Matching-engine order book | Part III review artifact: Rc<RefCell> Java-shaped design, 12 issues; arena + BTreeMap levels redesign | Part III review |
 | Leases in job scheduler | design exercise: Drop backstop + server-side expiry | 3.5 |
+| Request stats via Cell | per-request Cell counters; global metrics via atomics after E0277 | 4.1 |
+| Session-expiry index loop | remove-in-loop panic "len is 3 but the index is 3"; fix retain | 4.1 |
+| JWT claims cache | problem case #3 → entry API (1 hash instead of 3) | 4.2 |
+| Metrics refactor | generic record<T> moved &mut in 40 call sites; fix &impl Debug | 4.2 |
+| Frame parser API | FrameRef<'a> + Frame(Bytes) + to_owned boundary | 4.3 |
+| 'static metrics labels | Box::leak per request → OOM every few days | 4.3 |
+| Request-scoped interner | RefCell<Vec<&'a str>> invariance pain → indices | 4.4 |
+| Java handler array ArrayStoreException | variance failure analog | 4.4 |
+| Log visitor library | for_each_line with HRTB + ControlFlow; anomaly detector E0521 → to_owned | 4.5 |
+| Netty ring-buffer data exposure (Java) | retained ByteBuf after release | 4.5 |
+| Borrow-error triage playbook | A–B–C in PRs, strategies, no unsafe for borrow errors, Miri in CI | 4.6 |
+| unsafe cache borrow extension | later eviction made it UB; found by Miri weeks later | 4.6 |
+| Session manager triage | Part IV review capstone (4 errors) | Part IV review |
 
 **Ferrite** (the reader's own system) starts at Project Level 4 (Part XI).
 

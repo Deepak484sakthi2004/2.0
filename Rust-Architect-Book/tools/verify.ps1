@@ -16,6 +16,8 @@
            crash <needle>  must compile, then fail at run time (abort/signal) with <needle> in stderr
            error:E0502     must FAIL to compile with error[E0502]
            error:<word>    must FAIL to compile, stderr containing <word> (lint names, "reserved", ...)
+           miri <needle>   run under Miri (nightly); must report Undefined Behavior with <needle> in stderr
+           miri-ok         run under Miri; must finish with no UB reported
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File tools\verify.ps1 listings\part-01
@@ -59,14 +61,21 @@ foreach ($file in $files) {
             channel = $Channel; mode = $checkMode; edition = $checkEdition; crateType = $crateType
             tests = ($outcome -eq 'test'); backtrace = $false; code = $code
         } | ConvertTo-Json -Compress
+        $uri = 'https://play.rust-lang.org/execute'
+        if ($outcome -eq 'miri' -or $outcome -eq 'miri-ok') {
+            $uri = 'https://play.rust-lang.org/miri'
+            $body = @{ code = $code; edition = $checkEdition; tests = $false; aliasingModel = 'stacked' } | ConvertTo-Json -Compress
+        }
         # Decode the response as UTF-8 explicitly (Windows PowerShell 5.1 guesses Latin-1 otherwise).
-        $raw = Invoke-WebRequest -UseBasicParsing -Uri 'https://play.rust-lang.org/execute' -Method Post `
+        $raw = Invoke-WebRequest -UseBasicParsing -Uri $uri -Method Post `
             -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body))
         $resp = [Text.Encoding]::UTF8.GetString($raw.RawContentStream.ToArray()) | ConvertFrom-Json
         $stderr = [string]$resp.stderr
 
-        if ($outcome -eq 'ok' -or $outcome -eq 'build' -or $outcome -eq 'test') {
+        if ($outcome -eq 'ok' -or $outcome -eq 'build' -or $outcome -eq 'test' -or $outcome -eq 'miri-ok') {
             $pass = [bool]$resp.success
+        } elseif ($outcome -eq 'miri') {
+            $pass = (-not $resp.success) -and $stderr.Contains('Undefined Behavior') -and $stderr.Contains($needle)
         } elseif ($outcome -eq 'panic') {
             $pass = (-not $resp.success) -and $stderr.Contains('panicked') -and $stderr.Contains($needle)
         } elseif ($outcome -eq 'crash') {

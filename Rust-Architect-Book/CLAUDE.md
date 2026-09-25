@@ -73,7 +73,8 @@ Recurring boxes (blockquotes): **What actually happens?**, **Why not X?**, **Ana
 - Windows 10, single 32 GB SSD with ~1.5 GB free. **No local Rust toolchain; do not install one without asking.**
   Verify code through the Rust Playground via `tools/verify.ps1` (PowerShell 5.1; there is no working Python).
 - `verify.ps1` header outcomes: `ok`, `build`, `test` (runs #[cfg(test)] tests), `panic <needle>`, `crash <needle>`
-  (aborts, e.g. stack overflow), `error:E0xxx`, `error:<word>`. Mode may carry an edition override: `debug@2021`.
+  (aborts, e.g. stack overflow), `error:E0xxx`, `error:<word>`, `miri <needle>` (UB must be reported, nightly Miri),
+  `miri-ok`. Mode may carry an edition override: `debug@2021`.
 - `tools/emit.ps1 <file> -Target asm|llvm-ir|mir|hir|expand -Mode debug|release` fetches compiler artifacts
   (`hir`/`expand` use nightly). Save outputs to the scratchpad and quote them trimmed.
 - PowerShell variables are case-insensitive: never name a local the same as a script parameter (this bit us once).

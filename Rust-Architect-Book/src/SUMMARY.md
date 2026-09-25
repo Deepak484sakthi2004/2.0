@@ -38,14 +38,14 @@
 
 # Part IV — The Borrow Checker
 
-- [Part IV Overview]()
-  - [4.1 Aliasing XOR Mutation]()
-  - [4.2 Non-Lexical Lifetimes, Liveness, and Reborrowing]()
-  - [4.3 Lifetime Annotations and Elision]()
-  - [4.4 Variance and Subtyping]()
-  - [4.5 Higher-Ranked Trait Bounds]()
-  - [4.6 Reading Borrow-Checker Errors as Ownership Proofs]()
-  - [Part IV Review]()
+- [Part IV Overview](part-04-borrow-checker/README.md)
+  - [4.1 Aliasing XOR Mutation](part-04-borrow-checker/ch01-aliasing-xor-mutation.md)
+  - [4.2 Non-Lexical Lifetimes, Liveness, and Reborrowing](part-04-borrow-checker/ch02-nll-reborrowing.md)
+  - [4.3 Lifetime Annotations and Elision](part-04-borrow-checker/ch03-lifetime-annotations.md)
+  - [4.4 Variance and Subtyping](part-04-borrow-checker/ch04-variance.md)
+  - [4.5 Higher-Ranked Trait Bounds](part-04-borrow-checker/ch05-hrtb.md)
+  - [4.6 Reading Borrow-Checker Errors as Ownership Proofs](part-04-borrow-checker/ch06-reading-errors.md)
+  - [Part IV Review: Borrow-Error Triage & Interview Mode](part-04-borrow-checker/review.md)
 
 # Part V — Types as Architecture
 
@@ -296,5 +296,6 @@
   - [Part I Answers](appendix/answers-part-01.md)
   - [Part II Answers](appendix/answers-part-02.md)
   - [Part III Answers](appendix/answers-part-03.md)
+  - [Part IV Answers](appendix/answers-part-04.md)
 - [B. Glossary]()
 - [C. Sources and Further Reading]()
