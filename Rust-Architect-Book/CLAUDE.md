@@ -19,6 +19,11 @@ unique to Rust and systems programming. Never teach like a beginner course.
 3. Write chapters in `src/part-NN-slug/chMM-slug.md` using the chapter template below. Part overview in `README.md`.
 4. Write `review.md` (architecture review + interview mode + capstone) and the answer key `src/appendix/answers-part-NN.md`.
 5. Update `src/SUMMARY.md` (turn draft entries `[Title]()` into links) and `PROGRESS.md` (status, concepts, promises made/kept).
+6. **Publish**: the user wants every finished Part pushed to https://github.com/Deepak484sakthi2004/2.0, inside the folder
+   `Rust-Architect-Book/` (the repo also holds other study material: never touch other folders). Shallow-clone into the
+   scratchpad, copy this whole folder over `Rust-Architect-Book/`, commit with the attribution trailers, push to `main`.
+   Needs GitHub auth on this machine (`gh auth login` + `gh auth setup-git`, or Git Credential Manager); if a
+   non-interactive push fails with "could not read Username", ask the user to log in rather than prompting.
 
 ## Chapter template (three passes → the brief's 14 sections)
 
