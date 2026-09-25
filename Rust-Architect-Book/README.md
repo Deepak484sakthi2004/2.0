@@ -11,6 +11,9 @@ A book-length, architect-level Rust course for an experienced Java/backend engin
 | `SPEC.md` | The authoring brief the book follows (scope, chapter template, teaching philosophy). |
 | `PROGRESS.md` | Continuity ledger: what's written, concepts introduced, promises made to later Parts. |
 | `CLAUDE.md` | Working rules for continuing the book in a later session. |
+| `notes/` | The writer contract for Parts V onward (`AUTHORING-BRIEF.md`) and each Part's authoring report (verification details, word counts, tooling notes). |
+
+Status: see the table at the top of `PROGRESS.md`.
 
 ## Reading it
 

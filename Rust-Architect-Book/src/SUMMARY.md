@@ -49,50 +49,50 @@
 
 # Part V — Types as Architecture
 
-- [Part V Overview]()
-  - [5.1 Algebraic Data Types: Structs, Enums, Option, Result]()
-  - [5.2 Type Layout: Size, Alignment, Padding, and Niches]()
-  - [5.3 Newtypes, Zero-Sized Types, PhantomData, and Markers]()
-  - [5.4 The Type-State Pattern]()
-  - [Part V Review]()
+- [Part V Overview](part-05-types-architecture/README.md)
+  - [5.1 Algebraic Data Types: Structs, Enums, Option, Result](part-05-types-architecture/ch01-algebraic-data-types.md)
+  - [5.2 Type Layout: Size, Alignment, Padding, and Niches](part-05-types-architecture/ch02-type-layout.md)
+  - [5.3 Newtypes, Zero-Sized Types, PhantomData, and Markers](part-05-types-architecture/ch03-newtypes-zst-phantom.md)
+  - [5.4 The Type-State Pattern](part-05-types-architecture/ch04-type-state.md)
+  - [Part V Review: Type-Driven Design Capstone & Interview Mode](part-05-types-architecture/review.md)
 
 # Part VI — Traits
 
-- [Part VI Overview]()
-  - [6.1 Traits, Bounds, and Default Methods]()
-  - [6.2 Associated Types, Generic Traits, and Blanket Impls]()
-  - [6.3 Coherence and the Orphan Rule]()
-  - [6.4 Trait Objects, vtables, and dyn Compatibility]()
-  - [6.5 Static vs Dynamic Dispatch: The Architect's Decision]()
-  - [Part VI Review]()
+- [Part VI Overview](part-06-traits/README.md)
+  - [6.1 Traits, Bounds, and Default Methods](part-06-traits/ch01-traits-bounds.md)
+  - [6.2 Associated Types, Generic Traits, and Blanket Impls](part-06-traits/ch02-associated-generic-blanket.md)
+  - [6.3 Coherence and the Orphan Rule](part-06-traits/ch03-coherence-orphan.md)
+  - [6.4 Trait Objects, vtables, and dyn Compatibility](part-06-traits/ch04-trait-objects.md)
+  - [6.5 Static vs Dynamic Dispatch: The Architect's Decision](part-06-traits/ch05-static-vs-dynamic.md)
+  - [Part VI Review: Trait-Design Review & Interview Mode](part-06-traits/review.md)
 
 # Part VII — Generics and Monomorphization
 
-- [Part VII Overview]()
-  - [7.1 Generics from Call Site to Binary]()
-  - [7.2 Monomorphization vs Java Type Erasure]()
-  - [7.3 Code Bloat, Compile Time, and How to Control Them]()
-  - [Part VII Review]()
+- [Part VII Overview](part-07-generics/README.md)
+  - [7.1 Generics from Call Site to Binary](part-07-generics/ch01-generics-call-site-to-binary.md)
+  - [7.2 Monomorphization vs Java Type Erasure](part-07-generics/ch02-monomorphization-vs-erasure.md)
+  - [7.3 Code Bloat, Compile Time, and How to Control Them](part-07-generics/ch03-code-bloat-compile-time.md)
+  - [Part VII Review: Instance Accounting & Interview Mode](part-07-generics/review.md)
 
 # Part VIII — Error Handling
 
-- [Part VIII Overview]()
-  - [8.1 Result, Option, and the ? Operator]()
-  - [8.2 Designing Error Types: Libraries vs Applications]()
-  - [8.3 Panics, Unwinding, and Abort]()
-  - [8.4 Errors at Service Boundaries]()
-  - [Part VIII Review]()
+- [Part VIII Overview](part-08-error-handling/README.md)
+  - [8.1 Result, Option, and the ? Operator](part-08-error-handling/ch01-result-option.md)
+  - [8.2 Designing Error Types: Libraries vs Applications](part-08-error-handling/ch02-error-types.md)
+  - [8.3 Panics, Unwinding, and Abort](part-08-error-handling/ch03-panics.md)
+  - [8.4 Errors at Service Boundaries](part-08-error-handling/ch04-service-boundaries.md)
+  - [Part VIII Review: The Refunds PR & Interview Mode](part-08-error-handling/review.md)
 
 # Part IX — Collections and Memory
 
-- [Part IX Overview]()
-  - [9.1 Vec<T>: Pointer, Length, Capacity]()
-  - [9.2 String and Text Encoding]()
-  - [9.3 HashMap and HashSet]()
-  - [9.4 VecDeque, BTreeMap, BinaryHeap — and Why Not LinkedList]()
-  - [9.5 Choosing Collections by Cache Behavior]()
-  - [Interlude: The Trade-off Engine — BFS vs DFS, Down to the Stack Page]()
-  - [Part IX Review]()
+- [Part IX Overview](part-09-collections/README.md)
+  - [9.1 Vec<T>: Pointer, Length, Capacity](part-09-collections/ch01-vec.md)
+  - [9.2 String and Text Encoding](part-09-collections/ch02-string.md)
+  - [9.3 HashMap and HashSet](part-09-collections/ch03-hashmap.md)
+  - [9.4 VecDeque, BTreeMap, BinaryHeap — and Why Not LinkedList](part-09-collections/ch04-deque-btree-heap.md)
+  - [9.5 Choosing Collections by Cache Behavior](part-09-collections/ch05-cache-behavior.md)
+  - [Interlude: The Trade-off Engine — BFS vs DFS, Down to the Stack Page](part-09-collections/interlude-bfs-dfs.md)
+  - [Part IX Review: A Collections Design Review & Interview Mode](part-09-collections/review.md)
 
 # Part X — Closures, Iterators, and Zero-Cost Abstractions
 
@@ -297,5 +297,10 @@
   - [Part II Answers](appendix/answers-part-02.md)
   - [Part III Answers](appendix/answers-part-03.md)
   - [Part IV Answers](appendix/answers-part-04.md)
+  - [Part V Answers](appendix/answers-part-05.md)
+  - [Part VI Answers](appendix/answers-part-06.md)
+  - [Part VII Answers](appendix/answers-part-07.md)
+  - [Part VIII Answers](appendix/answers-part-08.md)
+  - [Part IX Answers](appendix/answers-part-09.md)
 - [B. Glossary]()
 - [C. Sources and Further Reading]()

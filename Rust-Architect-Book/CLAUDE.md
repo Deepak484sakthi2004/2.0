@@ -74,7 +74,8 @@ Recurring boxes (blockquotes): **What actually happens?**, **Why not X?**, **Ana
   Verify code through the Rust Playground via `tools/verify.ps1` (PowerShell 5.1; there is no working Python).
 - `verify.ps1` header outcomes: `ok`, `build`, `test` (runs #[cfg(test)] tests), `panic <needle>`, `crash <needle>`
   (aborts, e.g. stack overflow), `error:E0xxx`, `error:<word>`, `miri <needle>` (UB must be reported, nightly Miri),
-  `miri-ok`. Mode may carry an edition override: `debug@2021`.
+  `miri-ok`. Mode may carry an edition override: `debug@2021`, and (for Miri) `+tree` to use Tree Borrows instead of
+  Stacked Borrows: `debug+tree miri-ok`.
 - `tools/emit.ps1 <file> -Target asm|llvm-ir|mir|hir|expand -Mode debug|release` fetches compiler artifacts
   (`hir`/`expand` use nightly). Save outputs to the scratchpad and quote them trimmed.
 - PowerShell variables are case-insensitive: never name a local the same as a script parameter (this bit us once).

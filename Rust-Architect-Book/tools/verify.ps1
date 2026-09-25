@@ -9,6 +9,7 @@
       // verify: <mode> <outcome> [needle]
 
   mode     debug | release, optionally with an edition override: debug@2021
+           and, for miri/miri-ok, "+tree" to use Tree Borrows instead of Stacked Borrows: debug+tree
   outcome  ok              must compile and exit 0 (stdout is printed)
            build           must compile (built as a lib, never run: for code that hangs by design)
            test            must compile and pass `cargo test` (the #[cfg(test)] tests in the file)
@@ -50,7 +51,11 @@ foreach ($file in $files) {
 
     foreach ($c in $checks) {
         # NB: PowerShell variable names are case-insensitive, so never reuse a parameter's name here.
-        $modeSpec = $c.Groups[1].Value.Split('@')
+        # "+tree" in the mode (e.g. debug+tree) runs miri/miri-ok under Tree Borrows instead of Stacked Borrows.
+        $modeRaw = $c.Groups[1].Value
+        $aliasing = 'stacked'
+        if ($modeRaw.Contains('+tree')) { $aliasing = 'tree'; $modeRaw = $modeRaw.Replace('+tree', '') }
+        $modeSpec = $modeRaw.Split('@')
         $checkMode = $modeSpec[0]
         $checkEdition = if ($modeSpec.Count -gt 1) { $modeSpec[1] } else { $Edition }
         $outcome = $c.Groups[2].Value
@@ -64,7 +69,7 @@ foreach ($file in $files) {
         $uri = 'https://play.rust-lang.org/execute'
         if ($outcome -eq 'miri' -or $outcome -eq 'miri-ok') {
             $uri = 'https://play.rust-lang.org/miri'
-            $body = @{ code = $code; edition = $checkEdition; tests = $false; aliasingModel = 'stacked' } | ConvertTo-Json -Compress
+            $body = @{ code = $code; edition = $checkEdition; tests = $false; aliasingModel = $aliasing } | ConvertTo-Json -Compress
         }
         # Decode the response as UTF-8 explicitly (Windows PowerShell 5.1 guesses Latin-1 otherwise).
         $raw = Invoke-WebRequest -UseBasicParsing -Uri $uri -Method Post `
