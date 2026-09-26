@@ -207,15 +207,15 @@
 
 # Part XX — Performance Engineering
 
-- [Part XX Overview]()
-  - [20.1 Performance as a Measurement Discipline]()
-  - [20.2 Benchmarking Without Lying to Yourself]()
-  - [20.3 CPU Profiling and Flame Graphs]()
-  - [20.4 Allocation and Memory Profiling]()
-  - [20.5 Caches, Branch Prediction, and False Sharing]()
-  - [20.6 SIMD and Vectorization]()
-  - [20.7 Contention, NUMA, and Tail Latency]()
-  - [Part XX Review]()
+- [Part XX Overview](part-20-performance/README.md)
+  - [20.1 Performance as a Measurement Discipline](part-20-performance/ch01-measurement-discipline.md)
+  - [20.2 Benchmarking Without Lying to Yourself](part-20-performance/ch02-benchmarking.md)
+  - [20.3 CPU Profiling and Flame Graphs](part-20-performance/ch03-cpu-profiling.md)
+  - [20.4 Allocation and Memory Profiling](part-20-performance/ch04-allocation-memory.md)
+  - [20.5 Caches, Branch Prediction, and False Sharing](part-20-performance/ch05-caches-branches-false-sharing.md)
+  - [20.6 SIMD and Vectorization](part-20-performance/ch06-simd-vectorization.md)
+  - [20.7 Contention, NUMA, and Tail Latency](part-20-performance/ch07-contention-numa-tail.md)
+  - [Part XX Review: The Router Cache PR & Interview Mode](part-20-performance/review.md)
 
 # Part XXI — Networking
 
@@ -309,5 +309,6 @@
   - [Part XV Answers (15.1–15.3)](appendix/answers-part-15.md)
   - [Part XVII Answers](appendix/answers-part-17.md)
   - [Part XVIII Answers](appendix/answers-part-18.md)
+  - [Part XX Answers](appendix/answers-part-20.md)
 - [B. Glossary]()
 - [C. Sources and Further Reading]()

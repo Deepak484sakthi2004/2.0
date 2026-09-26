@@ -1,6 +1,6 @@
 # Progress & Continuity Ledger
 
-Last updated: 2026-09-26 (Parts I–XII, XIV, XVII, XVIII complete; XV partial (15.1–15.3); XIII, XVI, XIX, XX in
+Last updated: 2026-09-26 (Parts I–XII, XIV, XVII, XVIII, XX complete; XV partial (15.1–15.3); XIII, XVI, XIX in
 progress) · Baseline: Rust 1.98.1 stable, edition
 2024 (Playground-verified)
 Published to: https://github.com/Deepak484sakthi2004/2.0 (folder `Rust-Architect-Book/`)
@@ -32,10 +32,60 @@ need: concepts, promises, and Meridian facts.
 | XVI | FFI and Systems Programming | In progress: narrower retry approved by the user (interface engineering, no UB demonstrations) after the first writer was stopped by a safety classifier; see `notes/part-16-report.md` | — |
 | XXI | Networking | **Not written**: the writer was stopped by a safety classifier while writing a 21.4 slow-client timeout listing; 17 verified listings for 21.1–21.3 exist; waiting for the user's decision on a retry (see `notes/part-21-report.md`) | — |
 | XVII | Compilers | **Written** (8 chapters + review capstone + answer key) | 43 files / 50 checks, all pass |
-| XIII, XIX, XX | Tokio (L5) · Binary/OS · Performance | In progress | — |
+| XX | Performance Engineering | **Written** (7 chapters + promise table + review capstone + answer key) | 45 files / 48 checks (incl. 1 Miri, 1 nightly), all pass |
+| XIII, XIX | Tokio (L5) · Binary/OS | In progress | — |
 | XXII–XXVI | … | Planned (see `src/SUMMARY.md`) | — |
 
 All listing counts were re-verified by the integrator after each writer finished (independent `tools/verify.ps1` run).
+
+## Part XX concepts introduced
+
+| Concept | Where | Full treatment planned |
+|---|---|---|
+| A claim = metric + statistic + workload + comparison; the eight metrics (brief's list) with Rust/Java measurement | 20.1 | — |
+| One number hides the distribution: 4M pushes, wall/n 60.3 ns vs mean 29 vs p50 20 (= timer), p99.9 = page faults (1 per 512 pushes), max 778 µs = reallocation | 20.1 | — |
+| Amdahl measured (f = 12–14%): 2.57×/2.22× on 4 threads vs 2.95×/2.80× predicted; memory-bound parallel part limited by bandwidth | 20.1 | — |
+| Gateway hot-path model: ~0.97 µs/request, 0 allocations, HMAC 0.24 µs, httparse 0.23 µs; why "0.6 cores vs 333" is not a fleet plan | 20.1 | XXI (whole-service load test) |
+| Knuth 1974 full quote; premature pessimization (Sutter & Alexandrescu 2004) | 20.1 | — |
+| Benchmark lies demonstrated: DCE (0.0 ns), closed forms (Gauss in asm; sum of squares with 0x5555…56), cold start (83×, 32,770 faults), clock (Instant 25 ns, 20 ns step, tsc), order bias (identical fns "11×") | 20.2 | — |
+| LAYOUT BIAS: same 7-instruction loop, 1.7× apart; swapping closure definition order flips it (ch02-09 vs ch02-11; Mytkowicz et al. 2009, STABILIZER 2013) | 20.2 | XX (policy), XXII.7 |
+| The book's harness (warm-up, rotated interleaving, 31 samples, p10..p90, overlap verdict) | 20.2 | — |
+| Coordinated omission simulated: closed-loop p99 1.0 ms vs open-loop 1.5 s; record_correct; wrk2/k6 | 20.2 | XXI |
+| Failure-path cost: Result vs panic at depth 1/10/100 × 0/1/10% failures; panic zero-cost happy path; break-even ~0.2–0.6% | 20.2 | — |
+| Build-profile experiments as A/B load tests (opt-level, LTO, CGU); load curves (wrk2) for L3 | 20.2 | — |
+| perf blocked on the Playground (perf_event_paranoid = 4, EPERM) | 20.3 | — |
+| In-process sampler with seqlock: on-CPU vs wall-clock; aliasing with fixed interval (28/50/22 vs true 20/50/30) | 20.3 | — |
+| getrusage user/system split (unbuffered: 43 ms user / 87 ms system; BufWriter 1.1/0.1) | 20.3 | — |
+| Inlined frames vanish in release backtraces (4 → 1); frame pointers vs DWARF vs LBR; distros enabling frame pointers | 20.3 | XIX |
+| Merged functions mislabel profile leaves; `-Z merge-functions=disabled` | 20.3 | — |
+| perf stat / off-CPU / PGO / BOLT / `--timings` / `-Z self-profile` / LLVM `-time-passes` commands (unverified) | 20.3 | XXII |
+| Allocation-site profiler via GlobalAlloc + thread-local site (108 allocs/order) | 20.4 | — |
+| glibc malloc: tcache, arenas, dynamic mmap threshold, 8-byte header + 16-byte rounding (48 → 64 B) | 20.4 | XIX.5 |
+| Malloc costs measured: local ~11 ns/pair scaling to 4 threads; bump arena ~3×; cross-thread frees ~118 ns each | 20.4 | — |
+| Live heap vs RSS: 53 vs 71 MiB; frees don't shrink RSS; malloc_trim returns all | 20.4 | XIX.5 |
+| Zeroing cost vs size: 2× small, 1.5× large; fresh ≈ zeroed (dynamic mmap threshold) | 20.4 | — |
+| Latency ladder on this host: L1 1.6 ns, L2 ~5, L3 ~16, DRAM 130–171 ns (cache sizes read from /sys) | 20.5 | — |
+| Branch misprediction ~5.9 ns (~20 cycles); sign-bit tricks (test/jns, psrlw 7); branch-free count | 20.5 | — |
+| Byte-class table vs comparison chain: 1.07 vs 7.05 ns/byte on random order (6.6×) | 20.5 | XXVI (lexer) |
+| Niche vs tag: 4.4× in cache (compute), 2.2× from DRAM (bytes) | 20.5 | — |
+| Hot/cold vs SoA vs AoS: scan 26×/65× faster split; random record access AoS fastest | 20.5 | — |
+| False sharing slows readers 4× (1.41 vs 0.35 ns/read); `perf c2c` | 20.5 | — |
+| THP requested but mostly not granted (10 of 256 MiB); defrag=madvise doubled first touch | 20.5 | XIX.5 |
+| Order book: arena 1.4× throughput, p99 120 vs 246 ns, 0.82 → 0.22 allocs/op | 20.5 | XXIV |
+| Vectorization in asm: paddd, addsd chain, addpd lanes, saxpy_raw overlap check, early exit stays scalar; f64 Sum starts at −0.0 | 20.6 | — |
+| f64 8-lane sum 8× faster, 9e-16 relative difference, tolerance test | 20.6 | — |
+| Runtime dispatch: AVX2 21.4 GB/s vs plain 3.0 vs memchr 45 GB/s; Miri runs scalar path; E0133 for target_feature calls (1.86) | 20.6 | — |
+| `target_feature(enable = "avx2")` doesn't imply popcnt (count_ones becomes a bit trick) | 20.6 | — |
+| std::simd u8x32 on baseline = two SSE2 halves, 16.5 GB/s (nightly) | 20.6 | — |
+| noalias: runtime check ~free for disjoint raw pointers; overlapping case 46× slower (true dependence) | 20.6 | — |
+| x86-64 micro-architecture levels v1–v4; build baseline + dispatch; register pressure and spills | 20.6 | — |
+| M/M/1 simulated: p99 9×/22×/43×/308× service time at 50/80/90/99%; Little's law exact | 20.7 | XXI, XXIV |
+| Fan-out 1 − 0.99^N reproduced; hedging after 3 ms cuts p99 60 → 6 ms for ~1% extra calls; fails at N = 100 | 20.7 | XXI.4, XXIV |
+| Contention = wait time (hold 180 ns constant; wait p99 240 ns at 4 threads); second run showed median/throughput noise | 20.7 | — |
+| Ferrite shards: Mutex 10.2 vs RwLock 11.3 vs RwLock+Arc<[u8]> 19.2 M ops/s (4 threads) | 20.7 | XIII (L5), XXIII |
+| Core-to-core round trip 56–70 ns; sched_setaffinity works; 1 NUMA node, no SMT siblings on the Playground | 20.7 | — |
+| NUMA first-touch, numactl commands; thread-per-core (Seastar, Glommio, monoio); spin_loop/pause backoff (predicted) | 20.7 | — |
+| StampedLock optimistic read = seqlock; Kingman; Universal Scalability Law | 20.7 | — |
 
 ## Part XVIII concepts introduced
 
@@ -741,26 +791,21 @@ with the chapter that made the promise in parentheses.
   calls and relaxation, v0 symbols and demangling, `lang_start`, the `personality` routine, allocator shims, proc macros
   as `dlopen`ed host dylibs, `split-debuginfo`/`strip` (18.2, 18.6, 18.7); relocations and `@GOTPCREL` calls seen in
   17.8's asm, call relaxation, stack frames, the red zone and 16-byte alignment at calls (17.8 §5).
-- **Part XX (Performance):** PGO/BOLT (2.2, 7.2); runtime CPU feature detection (2.1); opt-level 2 vs 3; atomic/mutex/
-  no-sharing ranking (1.3); the gateway benchmark; false sharing (5.2); tagged vs niche in memory (5.2); AoS/SoA and
-  hot-cold splitting (5.2, 9.5); `perf stat -e branch-misses` for dispatch (6.5); pointer chasing, i-cache, chunked f64
-  sum, code-size budget (7.x); panic cost vs depth, Result-vs-exception benchmark (8.x); gateway access-log p99, fraud
-  feature-vector p99, THP/huge pages, order-book benchmark, allocator contention (9.x); deferred drop (3.1); `next()` vs
-  `fold()` and `dyn Iterator` costs under `perf`, vectorization details (10.3); `perf c2c`, ordering costs on Arm,
-  `pause`/backoff tuning, gateway per-worker counters on Graviton (14.x); tail latency from long polls,
-  `perf stat -e context-switches,cpu-migrations` on the ping-pong, allocator effects on per-task memory (12.6);
-  lock wait/hold-time measurement, `perf sched`, off-CPU flame graphs, `perf c2c` (11.7); thread pinning and placement,
-  NUMA and thread-per-core (11.1, 11.7); `RwLock` vs `Mutex` shards for large Ferrite values; `wrk` load curves for L3;
-  `noalias` benefits in loops, zeroing cost vs buffer size (15.2, 15.3); `-Z self-profile`/`--timings` on trait- and
-  generic-heavy crates, `-Z merge-functions=disabled` for profile attribution, Cranelift vs LLVM build time,
-  release-profile experiments, artifact-regression CI check, `-Z threads` (18.x); loops LLVM folds to closed formulas
-  (`triangle`, `guarded_sum`) as a benchmark lie, spill costs and register pressure, lexer byte-class tables vs
-  comparison chains, LLVM pass-pipeline cost (17.x).
+- ~~**Part XX (Performance):** every "measure it in Part XX" promise from Parts I–XVIII~~ **KEPT or explicitly labeled**
+  (20.1–20.7): the Part XX README has a table mapping each promise to the section that pays it off or to the local
+  command that would (perf, PGO/BOLT, NUMA, Arm, `-Z self-profile` are labeled, not run). Measured corrections to
+  earlier estimates: the fraud feature-vector change saves ~1.4% CPU per score (Part IX estimated ~3%), mainly removing
+  408 allocations per score and improving the tail; the access-log fix pays off in the 4-thread tail, not CPU; the
+  order-book arena gives 1.4× throughput and half the p99 of the `Rc<RefCell>` design; THP was requested but mostly not
+  granted on the Playground host. New fact: two "identical" sums measured 1.7× apart with identical asm; reordering the
+  closure definitions removed it (code layout bias, 20.2).
 - **Part XXI (Networking):** harden the Meridian gateway (Part I review); timeouts, retries, circuit breakers, retry
   budgets, deadline propagation (8.4); HashDoS and network input (9.3); Netty ByteBuf analogy (4.3, 4.5); io::ErrorKind
   by connection phase (8.4); owned-buffer completion I/O (io_uring) for servers, socket-buffer tuning at scale (12.1);
   TLS for L3/L4 (21.3); HTTP/2 streams and chunked bodies (L3, 21.2); request-smuggling strictness (duplicate
-  `Content-Length`), per-request deadlines against slowloris (L3 §5).
+  `Content-Length`), per-request deadlines against slowloris (L3 §5); the whole-gateway load test and canary numbers
+  deferred by 20.1 §9; syscall and TLS cost per request measured with Part XX's tools; wrk2 load curves; hedging with
+  budgets and cancellation (21.4); pool sizing with Little's law (21.5).
 - **Part XXII (Ecosystem):** serde zero-copy (`Cow<'a, str>`, `DeserializeOwned`) (4.3, 4.5); serde `transparent` /
   `try_from` at boundaries (5.3); tagged enums (2.6); money as strings in JSON (2.3); clap; thiserror/anyhow in crate
   choice (8.2); axum `IntoResponse for PaymentError` (8.4, unverified sketch); tower Retry policy by error class; Tower
@@ -773,25 +818,30 @@ with the chapter that made the promise in parentheses.
   compile-time SQL checking trade-off (18.2 → 22.4); Tower `BoxService` to cap type depth (18.3 → 22.3); `cargo test
   --release` in CI and reverse-dependency builds for shared crates (18.5, 18.6 → 22.7); semver checks for `Drop` and
   lifetime additions; fuzzing lexers and parsers ("never panics, every byte covered by one token"), differential
-  testing and shadow mode, library CI that recompiles dependents (17.2–17.4 → 22.7).
+  testing and shadow mode, library CI that recompiles dependents (17.2–17.4 → 22.7); criterion/divan and
+  cachegrind-based instruction-count CI, the benchmark template from 20.2 §10, dhat-rs and continuous profiling, tracing
+  spans for per-request latency (20.x → 22.5, 22.7).
 - **Part XXIII (Storage):** transaction guard → real transactions (3.5); commit with unknown outcome (8.3); persistent
   encodings instead of in-memory layout, padding (5.2); DB compare-and-set for state transitions (5.4); Ferrite v3
   `FerriteError` and a fallible store API (8.2 design exercise: reconcile with the brief's contract by adding a
   fallible trait or adapter, keeping v1's `KvStore` usable); zero-copy `RequestRef<'a>` (1.4); Ferrite v3 adds the
   fallible trait **next to** `KvStore` (L4 §3) and reuses `store_semantics` as a conformance suite (L4 §4);
   `update`/`INCR` logs the result, not the closure; transactions and cross-shard atomicity (23.6); zero-copy formats
-  with `zerocopy`/`bytemuck`, byte order in the type (15.2 §9 → 23.5).
+  with `zerocopy`/`bytemuck`, byte order in the type (15.2 §9 → 23.5); arena-per-batch memory for memtables and
+  compaction (20.4), RSS vs live heap in a storage engine, page-cache effects measured with `getrusage`/faults.
 - **Part XXIV (Distributed):** idempotency + reconciliation for ambiguous outcomes, "did it happen?" (8.4); generational
   arena / LRU reused (3.6); deterministic simulation for Ferrite's replication tests (12.5); Ferrite v5 replaces
   `RandomState` routing with a stable hash or range partitioning behind a versioned partition map (L4 §2); the leader
-  executes read-modify-writes and replicates results; partitioning large state (11.7 §5).
+  executes read-modify-writes and replicates results; partitioning large state (11.7 §5); hedged reads to replicas,
+  tail at scale for scatter-gather queries, thread-per-core for Ferrite shards, Little's law for replication
+  pipelines (20.x).
 - **Part XXVI (Language):** specialization and language-design trade-offs (6.3); `#[non_exhaustive]` and exhaustiveness
   (5.1); mirror rustc's architecture in the toy compiler (queries/HIR/MIR stages as the reference design, borrow
   checking on a MIR-like IR in 26.5–26.6); local type inference, hygiene, and Polonius-style analyses as language-design
   choices (18.x); optionally the coroutine state transform left open by XVIII (12.3); grow **Ore** (Part XVII's
   language, spec in `notes/part-17-report.md`) with structs, enums, patterns, ownership, and a borrow checker on a
   MIR-like IR; reuse the XVII pipeline listings; 26.7 targets LLVM; the Sieve rule language as a DSL-sized second
-  example.
+  example; the lexer class table and spill-aware register allocation in the toy compiler (20.5, 17.8).
 
 ## Running case study: Meridian (fictional)
 
@@ -1006,6 +1056,21 @@ Payments-and-marketplace company; mostly Java, one C++ team, Go tooling. Systems
 | Support-console query language (design exercises) | ~400 support agents; queries like `status == "failed" && ...`; ~2 billion payment rows | 17.3 §14, 17.7 §14 |
 | Pricing-rules engine (design exercise) | ~3,000 pricing rules, 5–40 features each, ~400,000 evaluations/s at checkout, p99 1 ms for the pricing call | 17.8 §14 |
 | sieve-compiler v0.1 PR | Part XVII review artifact: nine defects (Unicode literals, literal-overflow panic, unterminated-string/unknown-operator panics, chained comparisons + bool→int coercion, spanless errors + ignored trailing input, unknown features → 0, no type checking, unchecked folding, eager `&&`/`||`), plus compile-per-evaluation; v0.2 redesign | Part XVII review |
+| payments-core serializer swap (April 2026) | Microbenchmark (one response, one thread, mean) 2.1× faster; per-thread scratch buffer grew and shrank; p99 ~3 ms → ~11 ms within an hour; fix: fixed-size scratch buffer; review rule: performance PRs show p50/p99/p99.9/max on a recorded mix at production concurrency | 20.1 §10 |
+| Rust gateway capacity method | Component microbenchmarks with CI budgets (HMAC ≤ 0.3 µs, head parse ≤ 0.3 µs, 0 allocs/request after warm-up); open-loop load test at 30/50/70%; canary 2% of traffic on 3 pods vs Java pods in the same AZ; the canary is the only capacity number | 20.1 §9 |
+| gateway-core CI benchmark policy | Allocation counts + instruction counts (+2%) gate merges; asm diff of five hot functions asks for review; nightly criterion on a pinned runner (investigate if >5% for three nights); pre-release open-loop load test at 60% | 20.2 §9 |
+| Market-data decoder "0.3 ns" PR (2026) | Benchmark discarded results (40× claimed); production decode unchanged; new error path formatted a `Box<dyn Error>` per malformed frame from one flaky feed; fix: benchmark template (black_box, 1/1000 malformed inputs, bytes/s printed) | 20.2 §10 |
+| Gateway canary profiling procedure | Profiling variant (same opts, line-tables-only, force-frame-pointers); 99 Hz × 60 s on-CPU at peak, diffed against the capacity model; per-thread user/system metric; 30 s off-CPU; then one change at a time | 20.3 §9 |
+| Risk-limits merged-function profile (2026) | Flame graph blamed `<ExposureBucket as Drop>::drop` (35%); it was merged drop glue of a new per-request `Vec<Reservation>` clone; two days lost; runbook: `-Z merge-functions=disabled` for implausible leaves, trust callers | 20.3 §10 |
+| Access-log and fraud-vector justifications, measured | Access log: ~124 ns/line saved (≈0.05 cores at 400K req/s), p99.9 9.5 → 1.0 µs on 4 threads; fraud: 41 µs → 0.8 µs per score (~1.4% of 3 ms, ≈1.7 of ~120 cores), 408 → 0 allocs/score (~20M/s fleet-wide), p99.9 300 → 7.7 µs | 20.4 §9 |
+| payments-core reconciliation job OOM (2026) | Nightly, batches of 500,000 charges, 2 GiB limit; live heap ~400 MB, RSS 1.9 GiB → OOM on 3rd batch after a processor format change; fix: per-batch arena, RSS + live-heap export, mimalloc (measured); rule: jobs with limit < 3× live heap need an RSS-vs-live dashboard and a batch memory test | 20.4 §10 |
+| Order-book redesign decision | `ch05-07`-shaped benchmark on the production stream: arena 1.4× throughput, p99 120 vs 246 ns, 0.82 → 0.22 allocs/op, then price levels preallocated for the band; report reads a 1 s columnar snapshot | 20.5 §9 |
+| Session cache THP incident (2026) | `transparent_hugepage=always`: median slightly better, p99.9 spikes of several ms (synchronous compaction, khugepaged); fix: madvise mode, `defrag=defer`, `MADV_HUGEPAGE` only on the session table, `AnonHugePages` exported | 20.5 §10 |
+| Fleet SIMD policy | Baseline `x86-64` for the general pool, `aarch64` for Graviton; `target-cpu=native` banned in CI; libraries → auto-vectorization with asm check → explicit kernels with runtime dispatch; every kernel has a scalar reference and a differential test on x86-64 and aarch64 CI; Miri runs scalar paths | 20.6 §9 |
+| Access-log shipper AVX2 line counter (2026) | Kernel skipped the <32-byte remainder; under-reported ~1 line per few thousand batches; nightly "lines lost" reconciliation alerts for two weeks; its benchmark used a 16 MiB (multiple-of-32) buffer | 20.6 §10 |
+| Merchant-portal statement pages, hedged | ~40 document fetches per page; 1% slow → ~33% of pages; hedge at the document service's p95, ≤ 1 hedge per fetch, 5% global hedge budget, cancel the loser | 20.7 §9 |
+| Gateway 85% utilization target (2026) | Raised from 60% to 85% for cost; peak p99 3–4× worse; AZ failover pushed survivors > 95% → 8% of requests shed for 15 min; fix: size so the pool after losing a zone stays ≤ 75% at peak, autoscale on queue depth and p99, load shedding | 20.7 §10 |
+| Router cache PR #2291 | Part XX review capstone: last-hit cache behind a global `Mutex`; PR benchmark (one key) claims 6.0×; realistic mix: 2.4% hit rate, 1.36× slower on 1 thread, 4.3× slower on 4, ~2 allocs/lookup; the one-line fix `get(path)` is 1.85×/2.1× faster with 0 allocs | Part XX review |
 
 **Ferrite** (the reader's own system) starts at Project Level 4 (Part XI); its v1–v5 contract is in `notes/AUTHORING-BRIEF.md`.
 
