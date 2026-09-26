@@ -80,6 +80,10 @@ Recurring boxes (blockquotes): **What actually happens?**, **Why not X?**, **Ana
 - `tools/emit.ps1 <file> -Target asm|llvm-ir|mir|hir|expand -Mode debug|release` fetches compiler artifacts
   (`hir`/`expand` use nightly). Save outputs to the scratchpad and quote them trimmed.
 - PowerShell variables are case-insensitive: never name a local the same as a script parameter (this bit us once).
+- A failed Playground request is reported as `FAIL … request failed` (retried once). Before 2026-09-26 it could be
+  scored on the previous check's response; grep old logs for `Invoke-WebRequest :` if in doubt.
+- The Playground container has `rustc`, `gcc` and binutils plus a writable `/tmp` (no clang/llc/strace/perf): listings
+  can build real binaries or link C with Rust through `std::process::Command`; assert each inner build succeeded.
 - Parts V+ are written by parallel writers per `notes/AUTHORING-BRIEF.md`; integrate each finished Part with
   `bash tools/merge-report.sh NN` (inserts its concept table in Part order and appends its Meridian rows to
   `PROGRESS.md`), then edit the status row, the open-promises list, and `src/SUMMARY.md` by hand, re-verify its

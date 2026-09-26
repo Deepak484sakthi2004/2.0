@@ -77,10 +77,26 @@ foreach ($file in $files) {
             $uri = 'https://play.rust-lang.org/miri'
             $body = @{ code = $code; edition = $checkEdition; tests = $false; aliasingModel = $aliasing } | ConvertTo-Json -Compress
         }
-        # Decode the response as UTF-8 explicitly (Windows PowerShell 5.1 guesses Latin-1 otherwise).
-        $raw = Invoke-WebRequest -UseBasicParsing -Uri $uri -Method Post `
-            -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body))
-        $resp = [Text.Encoding]::UTF8.GetString($raw.RawContentStream.ToArray()) | ConvertFrom-Json
+        # Reset per-check state: a failed request must never be scored on the previous check's response.
+        $raw = $null; $resp = $null; $requestError = $null
+        for ($attempt = 1; $attempt -le 2 -and $null -eq $resp; $attempt++) {
+            try {
+                # Decode the response as UTF-8 explicitly (Windows PowerShell 5.1 guesses Latin-1 otherwise).
+                $raw = Invoke-WebRequest -UseBasicParsing -Uri $uri -Method Post -ErrorAction Stop `
+                    -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body))
+                $parsed = [Text.Encoding]::UTF8.GetString($raw.RawContentStream.ToArray()) | ConvertFrom-Json
+                if ($null -ne $parsed.error) { throw "Playground error: $($parsed.error)" }
+                $resp = $parsed
+            } catch {
+                $requestError = "request failed (attempt $attempt): $_"
+                if ($attempt -lt 2) { Start-Sleep -Seconds 5 }
+            }
+        }
+        if ($null -eq $resp) {
+            $failed++
+            Write-Host ("FAIL  {0}  [{1} {2}]  {3}" -f $file.Name, $c.Groups[1].Value, $outcome, $requestError)
+            continue
+        }
         $stderr = [string]$resp.stderr
 
         if ($outcome -eq 'ok' -or $outcome -eq 'build' -or $outcome -eq 'test' -or $outcome -eq 'miri-ok') {

@@ -74,7 +74,10 @@ exists on disk). Use your own scratch folder: `<scratchpad>/part-NN/`.
   whitespace in v1): requests `PING`, `GET <key>`, `SET <key> <value>`, `DEL <key>`; responses `+PONG`, `+OK`,
   `$<value>`, `_` (nil), `-ERR <message>`; each terminated by `\n`.
 - **v2 (Part XIII, Project L5)**: same protocol over Tokio: connection limit, per-connection backpressure, timeouts,
-  graceful shutdown; reuses `ShardedStore` behind `Arc`.
+  graceful shutdown; reuses `ShardedStore` behind `Arc`. **As built:** `KvStore` gained one *defaulted* method,
+  `fn get_shared(&self, key: &[u8]) -> Option<Arc<[u8]>> { self.get(key).map(Arc::from) }` (v1 impls still compile);
+  the v2 store keeps values as `Arc<[u8]>`; errors are `-ERR <CODE> <message>` (e.g. `BUSY`); see
+  `listings/part-13/project-05-ferrite-v2.rs`.
 - **v3 (Part XXIII, Project L7)**: persistent engine: WAL + memtable + sorted immutable segment files (LSM),
   recovery on startup, explicit fsync policy; implements `KvStore`.
 - **v4 (Part XXIV, Project L10)**: mini database: range scans, a small query/command layer, snapshot (MVCC) reads.

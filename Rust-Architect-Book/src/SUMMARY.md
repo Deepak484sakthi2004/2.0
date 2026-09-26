@@ -130,14 +130,14 @@
 
 # Part XIII — Tokio and Production Async
 
-- [Part XIII Overview]()
-  - [13.1 Tokio's Architecture: Scheduler, I/O Driver, Timers]()
-  - [13.2 Tasks, Spawning, and Blocking Code]()
-  - [13.3 Async Channels and Synchronization]()
-  - [13.4 Cancellation and Structured Concurrency]()
-  - [13.5 Backpressure, Timeouts, and Load Shedding]()
-  - [Project Level 5: An Async TCP Server (Ferrite v2)]()
-  - [Part XIII Review]()
+- [Part XIII Overview](part-13-tokio/README.md)
+  - [13.1 Tokio's Architecture: Scheduler, I/O Driver, Timers](part-13-tokio/ch01-tokio-architecture.md)
+  - [13.2 Tasks, Spawning, and Blocking Code](part-13-tokio/ch02-tasks-blocking.md)
+  - [13.3 Async Channels and Synchronization](part-13-tokio/ch03-channels-sync.md)
+  - [13.4 Cancellation and Structured Concurrency](part-13-tokio/ch04-cancellation.md)
+  - [13.5 Backpressure, Timeouts, and Load Shedding](part-13-tokio/ch05-backpressure.md)
+  - [Project Level 5: An Async TCP Server (Ferrite v2)](part-13-tokio/project-05-ferrite-v2.md)
+  - [Part XIII Review: The payout-relay PR & Interview Mode](part-13-tokio/review.md)
 
 # Part XIV — Memory Model and Atomics
 
@@ -162,12 +162,12 @@
 
 # Part XVI — FFI and Systems Programming
 
-- [Part XVI Overview]()
-  - [16.1 ABIs, Calling Conventions, and repr(C)]()
-  - [16.2 Calling C from Rust]()
-  - [16.3 Calling Rust from C (and from Java via FFM)]()
-  - [16.4 Ownership and Allocation Across Language Boundaries]()
-  - [Part XVI Review]()
+- [Part XVI Overview](part-16-ffi/README.md)
+  - [16.1 ABIs, Calling Conventions, and repr(C)](part-16-ffi/ch01-abi-repr-c.md)
+  - [16.2 Calling C from Rust](part-16-ffi/ch02-calling-c.md)
+  - [16.3 Calling Rust from C (and from Java via FFM)](part-16-ffi/ch03-calling-rust-from-c-and-java.md)
+  - [16.4 Ownership and Allocation Across Language Boundaries](part-16-ffi/ch04-ownership-across-boundaries.md)
+  - [Part XVI Review: The Explain-API PR & Interview Mode](part-16-ffi/review.md)
 
 # Part XVII — Compilers
 
@@ -196,14 +196,14 @@
 
 # Part XIX — Binary, Linker, and OS
 
-- [Part XIX Overview]()
-  - [19.1 Object Files, Symbols, and Relocations]()
-  - [19.2 Static and Dynamic Linking]()
-  - [19.3 Executable Formats: ELF, PE, Mach-O]()
-  - [19.4 From Executable to Process]()
-  - [19.5 Virtual Memory, Pages, and mmap]()
-  - [19.6 Syscalls, File Descriptors, Processes, and Threads]()
-  - [Part XIX Review]()
+- [Part XIX Overview](part-19-binary-os/README.md)
+  - [19.1 Object Files, Symbols, and Relocations](part-19-binary-os/ch01-object-files-symbols-relocations.md)
+  - [19.2 Static and Dynamic Linking](part-19-binary-os/ch02-static-dynamic-linking.md)
+  - [19.3 Executable Formats: ELF, PE, Mach-O](part-19-binary-os/ch03-executable-formats.md)
+  - [19.4 From Executable to Process](part-19-binary-os/ch04-executable-to-process.md)
+  - [19.5 Virtual Memory, Pages, and mmap](part-19-binary-os/ch05-virtual-memory-mmap.md)
+  - [19.6 Syscalls, File Descriptors, Processes, and Threads](part-19-binary-os/ch06-syscalls-fds-processes-threads.md)
+  - [Part XIX Review: The Release Audit & Interview Mode](part-19-binary-os/review.md)
 
 # Part XX — Performance Engineering
 
@@ -305,10 +305,13 @@
   - [Part X Answers](appendix/answers-part-10.md)
   - [Part XI Answers](appendix/answers-part-11.md)
   - [Part XII Answers](appendix/answers-part-12.md)
+  - [Part XIII Answers](appendix/answers-part-13.md)
   - [Part XIV Answers](appendix/answers-part-14.md)
   - [Part XV Answers (15.1–15.3)](appendix/answers-part-15.md)
+  - [Part XVI Answers](appendix/answers-part-16.md)
   - [Part XVII Answers](appendix/answers-part-17.md)
   - [Part XVIII Answers](appendix/answers-part-18.md)
+  - [Part XIX Answers](appendix/answers-part-19.md)
   - [Part XX Answers](appendix/answers-part-20.md)
 - [B. Glossary]()
 - [C. Sources and Further Reading]()
