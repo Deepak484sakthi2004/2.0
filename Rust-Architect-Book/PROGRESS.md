@@ -1,6 +1,6 @@
 # Progress & Continuity Ledger
 
-Last updated: 2026-09-25 (Parts I–XII, XIV, XVIII complete; XV partial (15.1–15.3); XIII, XVI, XVII, XIX, XX in
+Last updated: 2026-09-26 (Parts I–XII, XIV, XVII, XVIII complete; XV partial (15.1–15.3); XIII, XVI, XIX, XX in
 progress) · Baseline: Rust 1.98.1 stable, edition
 2024 (Playground-verified)
 Published to: https://github.com/Deepak484sakthi2004/2.0 (folder `Rust-Architect-Book/`)
@@ -29,8 +29,11 @@ need: concepts, promises, and Meridian facts.
 | XIV | Memory Model and Atomics | **Written** (5 chapters + review capstone + answer key) | 38 files / 62 checks (incl. 25 Miri), all pass |
 | XV | Unsafe Rust | **Partial**: 15.1–15.3 + overview + answers for 15.1–15.3 written. 15.4–15.6 and the review are **not written**: three writer attempts were stopped by a safety classifier (see `notes/part-15b-report.md`); 15.4's listings exist and are verified | 73 files / 120 checks (incl. 15.4's 15 files / 22 checks), all pass |
 | XVIII | How rustc Works | **Written** (7 chapters + review capstone + answer key) | 68 files / 80 checks (13 on nightly), all pass |
-| XIII, XVI, XVII, XIX, XX | Tokio (L5) · FFI · Compilers · Binary/OS · Performance | In progress | — |
-| XXI–XXVI | … | Planned (see `src/SUMMARY.md`) | — |
+| XVI | FFI and Systems Programming | In progress: narrower retry approved by the user (interface engineering, no UB demonstrations) after the first writer was stopped by a safety classifier; see `notes/part-16-report.md` | — |
+| XXI | Networking | **Not written**: the writer was stopped by a safety classifier while writing a 21.4 slow-client timeout listing; 17 verified listings for 21.1–21.3 exist; waiting for the user's decision on a retry (see `notes/part-21-report.md`) | — |
+| XVII | Compilers | **Written** (8 chapters + review capstone + answer key) | 43 files / 50 checks, all pass |
+| XIII, XIX, XX | Tokio (L5) · Binary/OS · Performance | In progress | — |
+| XXII–XXVI | … | Planned (see `src/SUMMARY.md`) | — |
 
 All listing counts were re-verified by the integrator after each writer finished (independent `tools/verify.ps1` run).
 
@@ -69,6 +72,51 @@ All listing counts were re-verified by the integrator after each writer finished
 | GraalVM Native Image reachability vs rustc collector | 18.6 | — |
 | Full trace of `let x = foo();`: expand (prelude injection), HIR (`#[attr = Inline(Never)]`), typeck probe, debug/release MIR, 18 vs 3 IR functions (incl. debug UB precondition checks), IR (`sret`, `invoke`/`landingpad`, `range` return attr), asm (cap/ptr/len at rsp, "meridian" as a 64-bit immediate, len kept in rbx) | 18.7 | XIX |
 | Artifact-choice table: debug artifacts for semantics, release for performance | 18.4, 18.7 | XX |
+
+## Part XVII concepts introduced
+
+| Concept | Where | Full treatment planned |
+|---|---|---|
+| Pipeline stages: knows/decides/forgets; "earliest stage with the information"; front/middle/back end | 17.1 | — |
+| One Rust fn at four levels (HIR, MIR debug/release, LLVM IR, asm): `scale` = `lea` + `inc` | 17.1 | XVIII.7 |
+| Interpreter / closure compilation / bytecode VM / JIT / AOT trade-off (10.1's 11.45 / 6.28 / 0.89 ns) | 17.1, 17.8 | XXVI |
+| Maximal munch; tokens as (kind, span); errors as tokens; lazy line/column via a line index | 17.2 | — |
+| Lexer = DFA: 256-byte class table + 12×11 transitions (388 B); longest-match loop; differential test (2,000 inputs) | 17.2 | — |
+| Token cost measured: spans 0 allocs / owned 233,756 / `chars()` 516,192; 1,264.7 vs 92.9 vs 60.3 MB/s (one run) | 17.2 | XX |
+| rustc lexing layers (`rustc_lexer` pure classifier, `rustc_parse` spans/interning/token trees); 8-byte `Span` | 17.2 | XVIII.2 |
+| Unicode identifiers (RFC 2457, 1.53, UAX #31, NFC); confusable lints (verified errors); bidi lint (1.56.1, Trojan Source) | 17.2 | — |
+| Java `\uXXXX` pre-lexing translation (JLS §3.3) vs Rust literal-only escapes | 17.2 | — |
+| Recursive descent (one fn per level, loops for left assoc) vs Pratt (binding powers; (l,r) asymmetry = associativity) | 17.3 | XXVI.1 |
+| Non-associative comparisons; turbofish; Rust grammar restrictions (braces, struct literals in conditions) | 17.3 | — |
+| Error recovery: synchronization (4 errors) vs skip-one-token (7, cascades, phantom statement) | 17.3 | — |
+| AST storage measured: Box 1,500,001 allocs / arena 21 / bump 18; 68.1 / 42.8 / 30.5 ms (one run) | 17.3 | — |
+| Parser stack per nesting level: RD 1,968 B debug / 224 B release, Pratt 753 / 144; overflow aborts (verified); depth limit; `stacker` | 17.3 | XIX (guard pages) |
+| rustc-style Visitor with `walk_*` defaults; the forgotten-walk bug | 17.4 | XVIII |
+| Two-pass resolution, scopes, shadowing (init before declare), namespaces, "did you mean" (edit distance ≤ len/3) | 17.4 | XVIII.2 |
+| Hygiene: mixed-site (`macro_rules!`) vs call-site (proc macros); names = (symbol, syntax context) | 17.4 | XVIII.2 |
+| AST node layout 72 → 32 → 24 → 12 bytes; rustc static size assertions | 17.4 | — |
+| Interning measured: 200,017 vs 2,039 allocs; lookups 4.04 vs 2.36 ms; equality 0.16 vs 0.04 ms (one run) | 17.4 | — |
+| Side tables keyed by node id; HIR bakes resolutions in | 17.4 | XVIII.2 |
+| Bidirectional checking (infer/check), `{error}` type, `!` coerces; rustc `ErrorGuaranteed` | 17.5 | XVIII.3 |
+| HM inference: type variables, unification over union-find, occurs check, zonk, generalization (let-polymorphism) | 17.5 | XXVI.2, XXVI.5 |
+| Rust inference boundaries: E0121 (signatures), closures not generalized (E0308 with provenance notes), literal fallback i32/f64 | 17.5 | — |
+| Interned types (`Ty<'tcx>` pointer equality), `ena` union-find with snapshots; HM worst case DEXPTIME (Mairson 1990) | 17.5 | XVIII.3 |
+| Java `var`, lambdas as poly expressions (target typing), JLS 18 inference | 17.5 | — |
+| Basic blocks, CFG lowering (short-circuit as branches), dominators (Cooper–Harvey–Kennedy), frontiers, back edges | 17.6 | XXVI.6 |
+| SSA via Cytron et al. (iterated DF + renaming); minimal vs pruned SSA (dead φs shown); Braun et al. 2013; Cranelift | 17.6 | XXVI.6 |
+| Dataflow: definite assignment (forward must) and liveness (backward may); top vs bottom start (bug verified, 17.6-6) | 17.6 | XVIII.5 |
+| E0381 on paths not values; `if true { x = 1 }` rejected (17.6-7) vs Java accepting (JLS 16, not verified) | 17.6 | — |
+| MIR = CFG over places (not SSA); LLVM debug allocas vs release SSA (`sroa`, `lcssa`, loop rotation, `nuw nsw`) | 17.6 | XVIII.4 |
+| Kam–Ullman bound for iterative dataflow; RPO iteration | 17.6 | — |
+| Optimizer passes on SSA: simplify (fold/copy/identities/branches), GVN over dominator tree, DCE (may_trap roots), block merge; 19→4 instructions, 14,687→9,667 dynamic | 17.7 | XXVI |
+| LICM legality: trapping ops only if executed anyway; naive vs safe LICM (verified table) | 17.7 | — |
+| LLVM verified: wrapping fold `x == i64::MAX`, CSE, LICM + SSE2 vectorization, SCEV closed form with 128-bit mul, DSE, div checks + 32-bit fast path, versioned LICM in `guarded_sum` | 17.7 | XX.6 |
+| UB and data-race freedom as optimization licenses (14.1's hoisting and memcpy from the compiler's side) | 17.7 | — |
+| C2 speculation, deopt, implicit null checks via SIGSEGV; precise Java exceptions | 17.7 | — |
+| Instruction selection (two-address, `lea`), liveness → live intervals (back-edge liveness), linear scan with spilling | 17.8 | XXVI.7 |
+| Emulator as oracle for generated code; K table: 138 vs 15 memory operands (K=4 vs 12) | 17.8 | — |
+| System V in real asm: 7th arg at `[rsp+8]`, callee-saved push/pop across calls, red zone, GOT calls | 17.8 | XVI.1, XIX |
+| Allocators: linear scan (C1, Graal), graph coloring (C2), LLVM greedy, Cranelift regalloc2; spill weights | 17.8 | — |
 
 ## Part XV concepts introduced
 
@@ -675,9 +723,9 @@ with the chapter that made the promise in parentheses.
   items in real bindings (15.1); `Vec::into_raw_parts`/`from_raw_parts` and `Box::into_raw` across the C boundary
   (15.3); exposed provenance for addresses from C (15.2); `repr(C, u32)` enums and explicit encodings at boundaries,
   `conv: Rust` vs `extern "C"` in the ABI dump (18.6).
-- **Part XVII (Compilers):** SSA/φ/register allocation deepened (2.3); type inference by unification (2.3); Java
-  definite assignment as dataflow (4.2); LICM hoisting, loop → `memcpy`, loop collapse and their data-race-freedom
-  license (14.x, from the compiler's side; also XVIII); closure compilation of an interpreter (10.1 benchmark).
+- ~~**Part XVII (Compilers):** SSA/φ/register allocation, unification-based inference, definite assignment as
+  dataflow, LICM/loop → `memcpy`/loop collapse and their license, closure compilation of an interpreter~~ **KEPT**
+  (17.1–17.8). The Part's language **Ore** is specified in `notes/part-17-report.md` for Part XXVI to grow.
 - ~~**Part XVIII (rustc):** trait solver, vtable layout, collector/CGUs/shared generics/function merging/Cranelift,
   exhaustiveness and match lowering, `?` desugaring, borrowck on MIR and Polonius status, post-mono errors, privacy
   phases, drop elaboration, `noalias`, queries/incremental, hygiene, HIR desugarings, `let x = foo();` traced,
@@ -691,7 +739,8 @@ with the chapter that made the promise in parentheses.
   (Interlude); musl static linking (2.1); `strace` of thread spawn (`clone`, `mmap`, `munmap`), thread-stack virtual
   memory, futex syscalls (11.1, 11.3, 11.7); canonical addresses and pointer tagging (TBI/LAM) (15.2); GOT-relative
   calls and relaxation, v0 symbols and demangling, `lang_start`, the `personality` routine, allocator shims, proc macros
-  as `dlopen`ed host dylibs, `split-debuginfo`/`strip` (18.2, 18.6, 18.7).
+  as `dlopen`ed host dylibs, `split-debuginfo`/`strip` (18.2, 18.6, 18.7); relocations and `@GOTPCREL` calls seen in
+  17.8's asm, call relaxation, stack frames, the red zone and 16-byte alignment at calls (17.8 §5).
 - **Part XX (Performance):** PGO/BOLT (2.2, 7.2); runtime CPU feature detection (2.1); opt-level 2 vs 3; atomic/mutex/
   no-sharing ranking (1.3); the gateway benchmark; false sharing (5.2); tagged vs niche in memory (5.2); AoS/SoA and
   hot-cold splitting (5.2, 9.5); `perf stat -e branch-misses` for dispatch (6.5); pointer chasing, i-cache, chunked f64
@@ -704,7 +753,9 @@ with the chapter that made the promise in parentheses.
   NUMA and thread-per-core (11.1, 11.7); `RwLock` vs `Mutex` shards for large Ferrite values; `wrk` load curves for L3;
   `noalias` benefits in loops, zeroing cost vs buffer size (15.2, 15.3); `-Z self-profile`/`--timings` on trait- and
   generic-heavy crates, `-Z merge-functions=disabled` for profile attribution, Cranelift vs LLVM build time,
-  release-profile experiments, artifact-regression CI check, `-Z threads` (18.x).
+  release-profile experiments, artifact-regression CI check, `-Z threads` (18.x); loops LLVM folds to closed formulas
+  (`triangle`, `guarded_sum`) as a benchmark lie, spill costs and register pressure, lexer byte-class tables vs
+  comparison chains, LLVM pass-pipeline cost (17.x).
 - **Part XXI (Networking):** harden the Meridian gateway (Part I review); timeouts, retries, circuit breakers, retry
   budgets, deadline propagation (8.4); HashDoS and network input (9.3); Netty ByteBuf analogy (4.3, 4.5); io::ErrorKind
   by connection phase (8.4); owned-buffer completion I/O (io_uring) for servers, socket-buffer tuning at scale (12.1);
@@ -721,7 +772,8 @@ with the chapter that made the promise in parentheses.
   binary-safe framing for Ferrite (L4 omissions → Project L6); proc-macro allowlist and `cargo expand` (18.2);
   compile-time SQL checking trade-off (18.2 → 22.4); Tower `BoxService` to cap type depth (18.3 → 22.3); `cargo test
   --release` in CI and reverse-dependency builds for shared crates (18.5, 18.6 → 22.7); semver checks for `Drop` and
-  lifetime additions.
+  lifetime additions; fuzzing lexers and parsers ("never panics, every byte covered by one token"), differential
+  testing and shadow mode, library CI that recompiles dependents (17.2–17.4 → 22.7).
 - **Part XXIII (Storage):** transaction guard → real transactions (3.5); commit with unknown outcome (8.3); persistent
   encodings instead of in-memory layout, padding (5.2); DB compare-and-set for state transitions (5.4); Ferrite v3
   `FerriteError` and a fallible store API (8.2 design exercise: reconcile with the brief's contract by adding a
@@ -736,7 +788,10 @@ with the chapter that made the promise in parentheses.
 - **Part XXVI (Language):** specialization and language-design trade-offs (6.3); `#[non_exhaustive]` and exhaustiveness
   (5.1); mirror rustc's architecture in the toy compiler (queries/HIR/MIR stages as the reference design, borrow
   checking on a MIR-like IR in 26.5–26.6); local type inference, hygiene, and Polonius-style analyses as language-design
-  choices (18.x); optionally the coroutine state transform left open by XVIII (12.3).
+  choices (18.x); optionally the coroutine state transform left open by XVIII (12.3); grow **Ore** (Part XVII's
+  language, spec in `notes/part-17-report.md`) with structs, enums, patterns, ownership, and a borrow checker on a
+  MIR-like IR; reuse the XVII pipeline listings; 26.7 targets LLVM; the Sieve rule language as a DSL-sized second
+  example.
 
 ## Running case study: Meridian (fictional)
 
@@ -930,6 +985,27 @@ Payments-and-marketplace company; mostly Java, one C++ team, Go tooling. Systems
 | Artifact-backed performance reviews | Gateway and payments-core: PRs claiming hot-path effects attach the right artifact (counting-allocator test or release asm for allocations, release asm for dispatch/inlining, debug MIR for drop/lock timing) | 18.7 §9 |
 | Market-data frame encoder length cache | Cached `len` parameter added after reading debug MIR/IR; later `push_str` made the length prefix short; ~1 in 400 frames truncated downstream; fixes: remove cached length, release-artifact rule, property test on prefix | 18.7 §10 |
 | Ledger client (capstone) | `post` with `ensure!`, `?`, `&mut dyn Sink` journal with `Drop`; three build tickets (alias cycle, removed braces E0499, merged `to_major` in release) | Part XVIII review |
+| Sieve (rule language) | typed rule language started 2026 by the risk platform team; shared by onboarding, fraud, payments risk; compiled at upload time in a rule service; evaluation services load compiled rules (Arc swap), evaluated by closure compilation; never parse at evaluation | 17.1 §9 |
+| Pre-Sieve JSON string-comparison rule | `{"gt": ["amount_minor", "100000"]}` compared as strings; review queue +~3,100 cases over 9 days | 17.1 §10 |
+| Sieve workload (design exercise) | ~60 analysts, a few hundred rule changes/week, ~2M evaluations/s (fraud 50K scores/s × ~40 rules) | 17.1 §14 |
+| Sieve lexer | spans, error tokens, `Money` token (currency + exact minor units, never via f64), ASCII identifiers and literals (escapes for non-ASCII), ~300 lines, fuzzed per commit, differential test | 17.2 §9 |
+| Cyrillic country-code incident (April 2026, Sieve beta) | `country == "DЕ"` (U+0415) from a regulator PDF; never matched for 16 days; found by the weekly "rules that haven't fired in 7 days" report | 17.2 §10 |
+| Sieve parser | Pratt with a reviewed binding-power file; v0.4 added `in`; ~4,100 rules in the store at migration; both parsers compared on every rule; depth limit 64; parenthesized hover in the editor; shadow mode mandatory for compiler changes | 17.3 §9 |
+| `&&`/`||` precedence incident (v0.3) | merged table row; caught in shadow mode before cutover (listing simulation: 906 vs 100 flags, 806 differ); fixes: tree diff over the rule store, every-pair precedence test, hover | 17.3 §10 |
+| Sieve feature catalog | the symbol table: name, type, owning service, cost class (local/remote), stable id; features and functions in separate namespaces; `let` may not reuse a catalog name; rules store ids + catalog version; reverse index blocks deletions | 17.4 §9 |
+| `velocity_1h` redefinition (June 2026) | card-level → merchant-level (card feature renamed `card_velocity_1h`); 37 stored rules re-resolved by name; review queue ~1,200/day → ~19,000 in 5 hours; pinned to previous catalog; fixes: ids, immutable meanings, catalog CI recompiles rules | 17.4 §10 |
+| Catalog size (design exercise) | ~900 features across 14 owning services | 17.4 §14 |
+| Sieve types | Int, Bool, Str, Money, Duration, Percent, lists; no implicit conversions; literals checked against context (`2.5%`); money literals must name a currency; local inference only | 17.5 §9 |
+| JPY threshold incident (May 2026, Japan launch) | old-engine rule `amount_minor > 100000` meant ¥100,000 for JPY; ~1 in 9 JPY payments to review vs intended ~1 in 200; noticed in 3 days via merchant complaints | 17.5 §10 |
+| Sieve rule IR and prefetch planner | rules lowered to a CFG; evaluator follows paths (lazy remote reads); planner prefetches only *anticipated* remote features (backward must); planner output shown in rule review | 17.6 §9 |
+| Prefetch may-analysis incident (v0.6, July 2026) | prefetched every possibly-read remote feature; graph-service calls ~2×, its p99 ~9 → ~31 ms; fraud scoring fell back to degraded mode; reverted after 25 minutes | 17.6 §10 |
+| Sieve optimizer | checked constant folding (overflow = compile error), CSE of feature reads, dead-condition warnings not deletions, nothing moves across a guard; differential test over ~2M recorded evaluations | 17.7 §9 |
+| Hoisted-division incident (v0.7, August 2026) | "compute derived values once" pass hoisted `volume_30d / merchant_age_days` above its guard; fail-closed rule; 47 minutes; ~2,300 payments declined at ~180 newly onboarded merchants; fixes: legality rule, boundary values, second reviewer for fail-closed rules | 17.7 §10 |
+| Sieve back end | tree-walking reference interpreter (oracle) + closure compilation with per-evaluation slots (lifetimes from liveness); Cranelift JIT prototype rejected (executable memory, security review; evaluation dominated by feature fetches); differential tests in CI and on a 1% live shadow sample | 17.8 §9 |
+| Quantifier slot-reuse bug (v0.8, September 2026) | `any`/`all` loops; slot lifetimes from textual uses; caught in shadow mode: 3 of 11 quantifier rules, ~0.4% of evaluations (lists with >1 element) | 17.8 §10 |
+| Support-console query language (design exercises) | ~400 support agents; queries like `status == "failed" && ...`; ~2 billion payment rows | 17.3 §14, 17.7 §14 |
+| Pricing-rules engine (design exercise) | ~3,000 pricing rules, 5–40 features each, ~400,000 evaluations/s at checkout, p99 1 ms for the pricing call | 17.8 §14 |
+| sieve-compiler v0.1 PR | Part XVII review artifact: nine defects (Unicode literals, literal-overflow panic, unterminated-string/unknown-operator panics, chained comparisons + bool→int coercion, spanless errors + ignored trailing input, unknown features → 0, no type checking, unchecked folding, eager `&&`/`||`), plus compile-per-evaluation; v0.2 redesign | Part XVII review |
 
 **Ferrite** (the reader's own system) starts at Project Level 4 (Part XI); its v1–v5 contract is in `notes/AUTHORING-BRIEF.md`.
 

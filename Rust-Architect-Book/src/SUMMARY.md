@@ -171,16 +171,16 @@
 
 # Part XVII — Compilers
 
-- [Part XVII Overview]()
-  - [17.1 The Compiler Pipeline End to End]()
-  - [17.2 Lexing]()
-  - [17.3 Parsing: Recursive Descent and Pratt Parsing]()
-  - [17.4 ASTs, Symbol Tables, and Name Resolution]()
-  - [17.5 Type Checking and Type Inference]()
-  - [17.6 Intermediate Representations, CFGs, and SSA]()
-  - [17.7 Optimization]()
-  - [17.8 Code Generation and Register Allocation]()
-  - [Part XVII Review]()
+- [Part XVII Overview](part-17-compilers/README.md)
+  - [17.1 The Compiler Pipeline End to End](part-17-compilers/ch01-pipeline.md)
+  - [17.2 Lexing](part-17-compilers/ch02-lexing.md)
+  - [17.3 Parsing: Recursive Descent and Pratt Parsing](part-17-compilers/ch03-parsing.md)
+  - [17.4 ASTs, Symbol Tables, and Name Resolution](part-17-compilers/ch04-ast-resolution.md)
+  - [17.5 Type Checking and Type Inference](part-17-compilers/ch05-type-checking-inference.md)
+  - [17.6 Intermediate Representations, CFGs, and SSA](part-17-compilers/ch06-ir-cfg-ssa.md)
+  - [17.7 Optimization](part-17-compilers/ch07-optimization.md)
+  - [17.8 Code Generation and Register Allocation](part-17-compilers/ch08-codegen-regalloc.md)
+  - [Part XVII Review: Sieve's First Compiler & Interview Mode](part-17-compilers/review.md)
 
 # Part XVIII — How rustc Works
 
@@ -307,6 +307,7 @@
   - [Part XII Answers](appendix/answers-part-12.md)
   - [Part XIV Answers](appendix/answers-part-14.md)
   - [Part XV Answers (15.1–15.3)](appendix/answers-part-15.md)
+  - [Part XVII Answers](appendix/answers-part-17.md)
   - [Part XVIII Answers](appendix/answers-part-18.md)
 - [B. Glossary]()
 - [C. Sources and Further Reading]()

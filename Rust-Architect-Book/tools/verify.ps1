@@ -33,6 +33,8 @@ param(
 )
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+# Keep non-ASCII compiler/program output intact when the output is redirected to a file.
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 
 $files = if (Test-Path $Path -PathType Container) {
     Get-ChildItem $Path -Filter *.rs | Sort-Object Name
