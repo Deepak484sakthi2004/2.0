@@ -258,8 +258,9 @@ correctness of the header's prose.
 **2. `no_mangle` and `cdylib`.** It emits the item under its literal name instead of a v0-mangled one. It's unsafe
 because two definitions of one unmangled name can collide at link or load time, and which one is used isn't something
 the type system checks. A `cdylib` puts exactly the `#[no_mangle]`/`#[export_name]` functions in its dynamic symbol table
-and hides all mangled Rust symbols. An executable exports nothing dynamically by default: `dlsym(this program)` failed
-with `undefined symbol: meridian_abi_version` in listing `ch03-04-dlopen.rs`.
+and hides all mangled Rust symbols: `nm -D --defined-only` on the library built in listing `ch03-06-c-calls-rust.rs`
+lists exactly its four `meridian_` functions. An executable exports nothing dynamically by default: `dlsym(this
+program)` failed with `undefined symbol: meridian_abi_version` in listing `ch03-04-dlopen.rs`.
 
 **3. `n == 0`.** `slice::from_raw_parts` requires a non-null, aligned pointer *even for length 0*, and C callers
 routinely pass NULL with a zero count. Returning `&[]` (whose pointer is a dangling, aligned, non-null one Rust
@@ -384,7 +385,9 @@ create function.
 
 **4. Two Rust `cdylib`s.** No. Each contains its own std and its own global allocator (they may even be configured
 differently, one with mimalloc). A `Box` from one freed by the other hands a block to an allocator that didn't create it:
-undefined behavior. Each library must export its own free function, and objects go back to the library that made them.
+undefined behavior. Listing `ch03-07-rust-plugin.rs` measured the separation: the plugin's `Box` and its free added
++0 to the host's counting allocator. Each library must export its own free function, and objects go back to the library
+that made them.
 
 **5. Handle designs with a stale handle.** Raw pointer: using a freed handle is undefined behavior (use after free).
 Pointer-as-integer with exposed provenance: the same, and Miri warns it may miss such bugs. Registry index plus
@@ -449,11 +452,13 @@ arenas.
   per-slot reference count (increment, re-check the generation, use, decrement; close marks dead and the last user
   frees), or defer frees with epochs (crossbeam-epoch, Chapter 14.4). Reading the generation alone isn't enough, which is
   Part XIV's reclamation problem.
-- **Systems.** A binary can have only one `#[global_allocator]` ("cannot define multiple global allocators"), because
-  it's a single set of symbols that the allocation shims call. Two `cdylib`s each bring their own. Locally: build two
-  `cdylib`s, each with a different global allocator and a `make_box`/`free_box` pair, load both from a small C program,
-  and pass a pointer from one library's `make_box` to the other's `free_box` under a sanitizer. Before that,
-  `LD_DEBUG=bindings` shows each library's symbols binding to its own copy of the allocator functions.
+- **Systems (predicted, then run it).** Plugin allocator: +1 alloc during `new_large_amount` (the `Box`), +1 free during
+  the rule's drop. Host allocator: +0 and +0, as the listing already measured. One binary can have only one
+  `#[global_allocator]` (rustc rejects a second), because the allocation shim functions every `Box` and `Vec` call are
+  defined once per final artifact. A process can hold several, because each `cdylib` is its own final artifact whose
+  shim functions stay local to it: they're not in its dynamic symbol table (16.3's `nm -D` output lists only the
+  `#[no_mangle]` functions), so nothing outside the library can bind to them. `LD_DEBUG=bindings` on a local machine
+  shows each library binding only its own imports.
 - **Architecture.** At 200 µs per call, one engine does at most about 5,000 calls/s (order of magnitude). A 2,000/s peak
   needs one busy engine, so run three or four for headroom and isolation. A queue bound of about 50 per engine (10 ms of
   work) keeps queueing delay inside the latency budget. Time out waiting for the reply at around 50 ms. When every queue

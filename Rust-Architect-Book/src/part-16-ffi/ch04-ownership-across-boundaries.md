@@ -302,6 +302,80 @@ malloc(64) + free                            Rust allocator: +0 allocs, +0 frees
 this Playground build Rust's allocator forwards to the system `malloc` underneath (`System`), which is exactly what
 makes mixing them *seem* to work until someone changes the global allocator (§10).
 
+**The same contracts, followed by a real C program.** Everything above was exercised from Rust playing the C side.
+Listing `ch04-09-c-client-ownership.rs` removes the pretense: it builds the functions of this section as a real
+`cdylib`, writes a header that states each ownership rule in one comment, compiles a C client against it with
+`gcc -Werror`, and runs the client twice, once normally and once built with `-fsanitize=address` (AddressSanitizer plus
+LeakSanitizer, which is on by default on x86-64 Linux). The header's ownership comments:
+
+```c
+/* Owned by the caller until passed to meridian_scorer_destroy (once; NULL is a no-op). */
+MeridianScorer *meridian_scorer_create(uint32_t block_at);
+void meridian_scorer_destroy(MeridianScorer *s);
+uint32_t meridian_scorer_block_at(const MeridianScorer *s);
+
+/* (1) Caller-allocated: writes at most cap bytes, no NUL; on TOO_SMALL, *needed says how many. */
+int32_t meridian_explain_into(uint64_t txn, uint8_t *buf, size_t cap, size_t *needed);
+
+/* (2) Library-allocated: read ptr[0..len]; don't modify; release with meridian_buf_free, once. */
+typedef struct MeridianBuf { uint8_t *ptr; size_t len; size_t cap; } MeridianBuf;
+_Static_assert(sizeof(MeridianBuf) == 24, "MeridianBuf layout changed");
+int32_t meridian_explain(uint64_t txn, MeridianBuf *out);
+void meridian_buf_free(MeridianBuf buf);
+
+/* (3) Borrowed during a callback: `name` is valid only until the callback returns; copy what you keep.
+       `user` is passed through untouched. Return 0 to continue, non-zero to stop. */
+typedef int32_t (*meridian_feature_cb)(void *user, const char *name, double value);
+int32_t meridian_for_each_feature(uint64_t txn, meridian_feature_cb cb, void *user);
+```
+
+And the C side of each rule (excerpt):
+
+```c
+static int32_t keep_best(void *user, const char *name, double value) {
+    Best *best = user;                      /* our own struct, handed back untouched */
+    best->seen++;
+    if (value > best->value) {
+        best->value = value;
+        snprintf(best->name, sizeof best->name, "%s", name); /* copy: `name` dies after we return */
+    }
+    return 0;
+}
+```
+
+```c
+    uint8_t *exact = malloc(needed);
+    if (exact == NULL) return 1;
+    rc = meridian_explain_into(7001, exact, needed, &needed);
+    printf("    explain_into(cap=%zu) -> rc=%d, \"%.*s\"\n", needed, rc, (int)needed, (const char *)exact);
+    free(exact);
+
+    /* (2) library-allocated: read it, then give it back to the library */
+    MeridianBuf buf = { 0 };
+    rc = meridian_explain(7002, &buf);
+    printf("(2) explain -> rc=%d, len=%zu cap=%zu, \"%.*s\"\n", rc, buf.len, buf.cap, (int)buf.len, (const char *)buf.ptr);
+    meridian_buf_free(buf);
+```
+
+```text
+scorer block_at = 80; create(150) is NULL: yes
+(1) explain_into(cap=16) -> rc=-2, needed=53
+    explain_into(cap=53) -> rc=0, "txn 7001: amount +0.41, velocity +0.22, country -0.05"
+(2) explain -> rc=0, len=53 cap=98, "txn 7002: amount +0.41, velocity +0.22, country -0.05"
+(3) for_each_feature -> rc=0, saw 3, largest: amount=2.87
+every allocation returned to the allocator that made it
+
+under AddressSanitizer + LeakSanitizer: exit 0, same output, no reports
+```
+
+The sanitizer run is the C-side counterpart of the `miri-ok` checks: the listing asserts that the instrumented client
+exits 0, prints the same output, and that its stderr contains no sanitizer report. Every allocation in the run, the
+scorer `Box`, the C `malloc` buffer, the `MeridianBuf`, and each `CString` lent to the callback, was released exactly
+once by the allocator that made it. The sanitizer sees the Rust library's allocations too, because on this build
+Rust's allocator sits on the same `malloc` that ASan intercepts, so a `MeridianBuf` the client never handed back is
+the kind of mistake it would be expected to report as a leak (predicted from mechanism; leaking is safe, so it's an
+easy experiment to run yourself). It reported nothing.
+
 ---
 
 ## Pass 2 · Systems level — *What crosses, and what it's made of*
@@ -450,9 +524,11 @@ lock per call (or a sharded or lock-free table, Part XI's options), and one extr
 ### 6. CPU / OS
 
 - **Allocators are per library, not per process.** [RUNTIME] Every Rust `cdylib` contains its own copy of std, with
-  its own global allocator, its own panic hook, and its own thread-locals. Two Rust libraries loaded into one JVM are
-  two Rust runtimes that don't know about each other: a `Box` created in one and freed by the other is an allocator
-  mismatch, even though both are "Rust." Rule 1 applies between Rust libraries exactly as between Rust and C.
+  its own global allocator, its own panic hook, and its own thread-locals. Chapter 16.3's plugin listing measured it:
+  the plugin's `Box::new` and the matching free added **+0** to the host's counting allocator. Two Rust libraries loaded
+  into one JVM are two Rust runtimes that don't know about each other: a `Box` created in one and freed by the other is
+  an allocator mismatch, even though both are "Rust." Rule 1 applies between Rust libraries exactly as between Rust and
+  C.
 - **Mixing allocators is undefined, not "slightly wrong."** An allocator keeps metadata next to or around each block,
   in a format only it understands, so handing a block to a different allocator's `free` makes it misread that metadata
   (Chapter 15.1 for why "undefined" means anything can follow). It can appear to work when both allocators are the same
@@ -673,9 +749,9 @@ without breaking anyone.
 - **Advanced.** Make the registry in listing `ch04-08-handle-registry.rs` lock-free for lookups: a fixed-capacity slab
   with `AtomicU64` generation counters. What does a lookup have to do so that a concurrent close can't free the session
   while it's being used? (Hint: Part XIV's reclamation problem.)
-- **Systems.** Write a program with two different global allocators in two *modules* of one binary (you can't, and
-  explain why), then describe how you'd reproduce the two-runtimes situation of §6 with two `cdylib`s locally, and what
-  `LD_DEBUG=bindings` would show.
+- **Systems.** Extend listing `ch03-07-rust-plugin.rs`: give the plugin its own counting `#[global_allocator]` and
+  export a function that reports its counters. Predict both allocators' counts across `new_large_amount` and the
+  rule's drop, then run it. Why can't one binary have two global allocators, while one process can have several?
 - **Architecture.** The owner-thread design serializes all calls to one engine. The vendor's engine takes about 200 µs
   per call, and the review queue peaks at 2,000 requests/s. Size the pool, the queue bounds, and the timeout, and say
   what the service does when every queue is full.

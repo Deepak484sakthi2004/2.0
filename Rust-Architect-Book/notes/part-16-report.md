@@ -3,7 +3,10 @@
 ## Status
 
 **Written** (the narrower retry the user approved): `src/part-16-ffi/README.md`, chapters 16.1–16.4, `review.md`,
-`src/appendix/answers-part-16.md`, and `listings/part-16/` (39 files, 61 checks). Scope as agreed: FFI as interface
+`src/appendix/answers-part-16.md`, and `listings/part-16/` (43 files, 65 checks). After the integrator's two updates
+(fixed `verify.ps1`; the container's `rustc`/`gcc`/binutils), four listings now cross a real language boundary
+(gcc-built C called from Rust, a C client of the Rust `cdylib`, a `dlopen`ed Rust plugin, and a C ownership client run
+under ASan + LSan), and the chapters quote their C code and output instead of unverified sketches. Scope as agreed: FFI as interface
 engineering. No listing demonstrates undefined behavior. Miri is used only as `miri-ok` on correct code, and every
 contract the compiler can enforce is shown through a compile error or a denied lint. Where the prose says a broken
 contract is undefined, it says so in a sentence and points to Chapter 15.1. The safety classifier did not trigger.
@@ -64,6 +67,9 @@ Appendix entry, after the Part XV answers line:
 | Handles as integers: exposed provenance (Miri warning) vs generational registry (misuse = `-1`) | 16.4 | — |
 | Thread-affine engine: `!Send` (E0277) + owner thread + bounded queue + one-shot replies; `EngineDown` | 16.4 | — |
 | FFM arenas mapped to Rust ownership; `reinterpret(len, arena, cleanup)` adopting a Rust buffer | 16.4 | — |
+| Real boundary builds in the Playground container: gcc-built `libvse.so` + Rust binding with `#[link(name = "vse")]` (same output as the simulation); C client of the `cdylib` with `_Static_assert` layout checks; `nm -D` = exactly the four `meridian_` exports; a panic inside the library prints on the host's stderr as thread `'<unnamed>'` | 16.2, 16.3 | XIX |
+| Rust plugin `cdylib` loaded with `dlopen`: `FfiRule<'lib>`, ABI-version symbol, host counting allocator +0/+0 across the plugin's `Box` alloc/free (one std + allocator per `cdylib`) | 16.3 | XV.5 |
+| C client following all ownership rules (caller buffer, `MeridianBuf` + free, callback + user data, create/destroy), clean under ASan + LeakSanitizer | 16.4 | XV.6 |
 
 ## Promises to later Parts
 
@@ -84,9 +90,10 @@ Appendix entry, after the Part XV answers line:
 - The fraud library via FFM: `meridian_score` codes 0/-1/-99 (8.3), concrete `score_batch` exports over generic
   internals (7.2), Java string transfer FFM vs JNI (9.2): 16.3 §3, §8, §9.
 - `Option<&T>`/`repr(transparent)` guarantees, `repr(C)` enums (RFC 2195) (5.2, 6.5): 16.1 §3.
-- Loading a `cdylib` plugin with the C-ABI vtable of 6.5: **partly**. `dlopen`/`dlsym` verified on `libc.so.6` and the
-  `Symbol<'lib, F>` lifetime (plus its E0505) verified; the plugin load itself is an unverified `libloading` sketch, and
-  16.3 §9 corrects `FfiRule`'s `&'static RuleVTable` (a lifetime or "never unload").
+- Loading a `cdylib` plugin with the C-ABI vtable of 6.5: **kept, verified.** Listing `ch03-07-rust-plugin.rs` builds
+  6.5's plugin side as a real `cdylib`, loads it with `dlopen`, checks an ABI-version symbol, and uses `FfiRule<'lib>`
+  (correcting 6.5's `&'static RuleVTable`); the `Symbol<'lib, F>` E0505 is `ch04-07`. `libloading` is named as the
+  production crate (not on the Playground).
 - The fraud library's thread-affine native scoring handle and the owner-thread design (11.2): 16.2 §9 + 16.4 §9.
 - `unsafe extern` blocks with `safe` items in real bindings (15.1): 16.2 §9 (`vse_version`).
 - `Vec::into_raw_parts`/`from_raw_parts` and `Box::into_raw` across the C boundary (15.3): 16.3, 16.4.
@@ -104,6 +111,7 @@ Appendix entry, after the Part XV answers line:
 | Fraud library C API v3 | `meridian_abi_version()` = 3; `meridian_scorer_new(cfg, **out)`/`meridian_scorer_free` (NULL no-op); `meridian_score_batch(s, ids, n, out)` thread-safe (`Sync` asserted), `ids`/`out` must not overlap; `MeridianConfig { block_at, review_at }`; codes 0 / -1 / -99, plus -2 = buffer too small (16.4) | 16.3 §3 |
 | Fraud FFM binding (Java) | `FraudLibrary implements AutoCloseable`; `jextract` bindings in the repo, regenerated in CI; library loaded once into `Arena.global()`; ABI check at startup; batches ≤ 256 IDs per downcall, per-call confined arenas; one scorer per process, hourly model reload inside Rust (`ArcSwap<Model>`); -1 → `IllegalArgumentException` + metric, -99 → `IllegalStateException` + alert + circuit breaker to fallback rules | 16.3 §9 |
 | Rule plugin host | rule `cdylib`s loaded once at startup, never unloaded (documented at `FfiRule`'s `'static` vtable) | 16.3 §9 |
+| Fraud library panic hook | a panic inside the library prints on the host process's stderr (the JVM console log) with thread `'<unnamed>'`, so the library installs its own hook when the first scorer is created, routing messages to the structured log with thread and transaction | 16.3 §3 |
 | Backfill null out-pointer crash | the Rust backfill job linked the `rlib` and called the (then safe) exported `meridian_score` with `null_mut()` for `out` in warm-up; segfault in a crate with no `unsafe`; fix: `unsafe extern "C" fn` + null check → -1; Clippy `not_unsafe_ptr_arg_deref` enabled | 16.3 §10 |
 | Vendor engine owner threads | a small pool of owner threads, one engine each (vendor allows several per process, each thread-bound), least-loaded dispatcher, bounded queues, one-shot replies; `EngineDown` → restart + metric | 16.4 §9 |
 | `meridian_version_string` allocator incident (2026) | returned `CString::into_raw`, header said "free with free()"; a C++ tool worked for years under the `System` allocator; the fraud library adopted mimalloc in 2026 and the tool crashed intermittently in `free()`; fix: `MeridianBuf` + `meridian_buf_free`, every pointer-returning export has a `*_free`, Java adopts buffers via `reinterpret(..., cleanup)` | 16.4 §10 |
@@ -113,8 +121,10 @@ Appendix entry, after the Part XV answers line:
 
 ## Verification
 
-- `listings/part-16/`: **39 files, 61 checks, all PASS** in one final full-folder run (output saved to scratch
-  `part-16/final/verify-final.txt`). rustc 1.98.1 stable, edition 2024;
+- `listings/part-16/`: **43 files, 65 checks, all PASS** in a final full-folder run with the **fixed** `verify.ps1`
+  (retry once, then `FAIL … request failed`); `grep "request failed"` on its output: **0 matches** (output saved to
+  scratch `part-16/final/verify-final-2.txt`; the earlier 61-check run with the old script is `verify-final.txt`).
+  rustc 1.98.1 stable, edition 2024;
   18 `miri-ok` runs (all on correct code, Stacked Borrows); 9 intended compile failures (`E0080`, `E0617`, `E0277`,
   `E0505`, and denied lints `improper_ctypes_definitions` ×3, `improper_ctypes`, `dangling_pointers_from_temporaries`);
   the nightly `#[rustc_abi(debug)]` dump checked in debug (`error:OnStack`) and release (`error:Cast`); 3 `release build`
@@ -128,24 +138,32 @@ Appendix entry, after the Part XV answers line:
 - Every `rust` and `rust,compile_fail` block in the chapters and review was machine-checked line by line against the
   listings (a perl script over `listings/part-16/*.rs`); all `rust,ignore` blocks either name their listing or are
   labeled "not verified here" / "review sketch". Answer-key rewrites are labeled sketches.
-- Where C code is required, listings simulate it with Rust functions exported under the same C ABI and symbol names
-  (the `vendor` module of `ch02-11` and `ch04-05`), and say so.
-- Unverifiable here and labeled with the local command: Java FFM/JNI code (JDK 22+, `--enable-native-access`), C
-  headers, `cbindgen`, `bindgen`, `jextract`, Cargo `cdylib` settings, `nm -D`, the `libloading` plugin load, the
-  `jni`-crate signature, `LD_DEBUG=bindings`.
+- **Real cross-language builds** (4 listings, `debug ok`, native only): `ch02-13-vse-real-c.rs` (gcc-built C library
+  + Rust binding with `#[link]`), `ch03-06-c-calls-rust.rs` (Rust `cdylib` + gcc C client with `_Static_assert`s +
+  `nm -D`), `ch03-07-rust-plugin.rs` (plugin `cdylib` loaded with `dlopen`, host counting allocator), and
+  `ch04-09-c-client-ownership.rs` (C client of every ownership protocol, plain and under ASan + LSan, asserting no
+  sanitizer report). Each inner `rustc`/`gcc`/client/`nm` invocation goes through a helper that asserts
+  `status.success()`, so a failed inner build fails the check. The `c` blocks quoted in 16.2–16.4 are verbatim excerpts
+  of these listings (checked by the same perl script).
+- Listings that need a C library *and* Miri (`ch02-11`, `ch04-05`) still simulate it with Rust functions exported under
+  the same C ABI and symbol names, and say so; `ch02-13` shows the simulation and real C give identical output.
+- Unverifiable here and labeled with the local command: Java FFM/JNI code (JDK 22+, `--enable-native-access`), the
+  JNI C glue (needs `jni.h`), `cbindgen`, `bindgen`, `jextract`, Cargo `cdylib`/build-script settings, the `libloading`
+  crate (named as the production equivalent of the verified `dlopen` wrapper), the `jni`-crate signature,
+  `LD_DEBUG=bindings`.
 
 ## Word count
 
 | File | Words (`wc -w`, code included) |
 |---|---|
-| README.md | 784 |
+| README.md | 878 |
 | ch01-abi-repr-c.md | 5,634 |
-| ch02-calling-c.md | 6,264 |
-| ch03-calling-rust-from-c-and-java.md | 5,469 |
-| ch04-ownership-across-boundaries.md | 5,886 |
+| ch02-calling-c.md | 6,581 |
+| ch03-calling-rust-from-c-and-java.md | 6,113 |
+| ch04-ownership-across-boundaries.md | 6,450 |
 | review.md | 2,075 |
-| answers-part-16.md | 7,382 |
-| **Total** | **≈ 33,500** |
+| answers-part-16.md | 7,447 |
+| **Total** | **≈ 35,200** |
 
 ## Tooling notes
 
@@ -171,6 +189,26 @@ New in this Part:
   contain backslashes with the Write tool.
 - The Playground's `/execute` endpoint twice timed out ("The operation timed out: deadline has elapsed") under shared
   load while `/miri` succeeded; a retry passed.
+
+Real language boundaries in the Playground container (added after the integrator's note):
+
+- The container has `rustc 1.98.1` (`/playground/.cargo/bin/rustc`, sysroot = the stable toolchain), `gcc 13.3.0`
+  (Ubuntu), GNU binutils 2.42 (`nm`, `readelf`, `objdump`), and a writable `/tmp`. `rustc --edition 2024
+  --crate-type cdylib` on a small file takes ~0.1 s (measured once), so several inner builds fit easily in one run.
+- Pattern used by `ch02-13`, `ch03-06`, `ch03-07`, `ch04-09`: keep each inner source in a `const &str = r##"..."##`
+  (raw strings keep C's `\n` and quotes intact), write it to its own `/tmp/meridian-16-*` directory, run every build
+  and the client through a `run()` helper that `assert!`s `status.success()` and prints the inner stderr on failure, so
+  a failed inner build fails the check.
+- Linking C to a Rust `cdylib`: `gcc ... -L DIR -lNAME -Wl,-rpath,DIR`. Linking a Rust binary to a gcc-built `.so`:
+  `rustc -L DIR -C link-arg=-Wl,-rpath,DIR` plus `#[link(name = "NAME")]` on the extern block.
+- `nm -D --defined-only` on a Rust `cdylib` lists only the `#[no_mangle]` functions (4 for the fraud library, 2 for the
+  plugin). A Rust `cdylib` loaded by `dlopen` does **not** use the host's `#[global_allocator]` (+0/+0 measured).
+- `-fsanitize=address` works (libasan, liblsan, libtsan, libubsan are installed), and **LeakSanitizer is active** in the
+  container (a scratch-only C probe with a deliberate 10-byte `malloc` leak reported "LeakSanitizer: detected memory
+  leaks"; that probe is not a book listing). Rust's `System` allocator goes through `malloc`, so ASan sees a `cdylib`'s
+  allocations too.
+- A Rust panic inside a `cdylib` called from C's `main` prints `thread '<unnamed>' (PID) panicked at <file>:<line>`;
+  `HashMap`'s `Index` panics with "no entry found for key".
 
 From the earlier attempt (kept for reference):
 

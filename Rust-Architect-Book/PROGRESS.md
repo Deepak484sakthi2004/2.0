@@ -29,7 +29,7 @@ need: concepts, promises, and Meridian facts.
 | XIII | Tokio and Production Async | **Written** (5 chapters + Project L5 Ferrite v2 + review capstone + answer key) | 44 files / 47 checks, all pass |
 | XIV | Memory Model and Atomics | **Written** (5 chapters + review capstone + answer key) | 38 files / 62 checks (incl. 25 Miri), all pass |
 | XV | Unsafe Rust | **Partial**: 15.1–15.3 + overview + answers for 15.1–15.3 written. 15.4–15.6 and the review are **not written**: three writer attempts were stopped by a safety classifier (see `notes/part-15b-report.md`); 15.4's listings exist and are verified | 73 files / 120 checks (incl. 15.4's 15 files / 22 checks), all pass |
-| XVI | FFI and Systems Programming | **Written** (4 chapters + review capstone + answer key) with the narrower scope the user approved: interface engineering, no UB demonstrations (the first attempt was stopped by a safety classifier) | 39 files / 61 checks (incl. 18 Miri, all on correct code), all pass |
+| XVI | FFI and Systems Programming | **Written** (4 chapters + review capstone + answer key) with the narrower scope the user approved: interface engineering, no UB demonstrations (the first attempt was stopped by a safety classifier) | 43 files / 65 checks (incl. 18 Miri, all on correct code; 4 listings build and link real C and Rust in the container, one under ASan+LSan), all pass |
 | XVII | Compilers | **Written** (8 chapters + review capstone + answer key) | 43 files / 50 checks, all pass |
 | XVIII | How rustc Works | **Written** (7 chapters + review capstone + answer key) | 68 files / 80 checks (13 on nightly), all pass |
 | XIX | Binary, Linker, and OS | **Written** (6 chapters + review capstone + answer key) | 29 files / 31 checks, all pass |
@@ -883,9 +883,10 @@ with the chapter that made the promise in parentheses.
 - ~~**Part XVI (FFI):** `extern "C"` ABI, `catch_unwind` at entry points, `C-unwind`, `cdylib` exports, the fraud library
   via FFM (codes 0/-1/-99, concrete `score_batch`), JNI vs FFM strings, `Option<&T>`/`repr(transparent)`, `repr(C)` and
   `repr(C, u32)` enums, thread-affine handles, `unsafe extern` with `safe` items, raw-parts ownership transfer, exposed
-  provenance, `conv: Rust` vs `extern "C"`~~ **KEPT** (16.1–16.4, narrower scope: no UB demonstrations). Partly kept:
-  loading a `cdylib` plugin: `dlopen`/`dlsym` and the `Symbol<'lib>` lifetime are verified, the `libloading` load is a
-  labeled sketch. Promises XVI made to XIX/XX, which were written in parallel: XIX covers `nm -D`, `@GOTPCREL`,
+  provenance, `conv: Rust` vs `extern "C"`, loading a `cdylib` plugin (6.5's rule plugin built as a real `cdylib`
+  and `dlopen`ed in the container; each `cdylib` has its own allocator, measured)~~ **KEPT** (16.1–16.4, narrower
+  scope: no UB demonstrations; real C↔Rust builds via the container's `gcc`/`rustc`, a C client run clean under
+  ASan+LSan). Promises XVI made to XIX/XX, which were written in parallel: XIX covers `nm -D`, `@GOTPCREL`,
   `RTLD_LOCAL`/`RTLD_GLOBAL`, interposition, `dlopen` and `libgcc_s` unwinding; **still open:** the `cdylib` version
   script, `-rdynamic`, reading a JVM `hs_err` log with native frames, measuring FFM downcall overhead vs batch size
   (JMH), `qsort_r` vs `sort_by` + `total_cmp`.

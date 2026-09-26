@@ -323,8 +323,9 @@ resource). §10 shows what "immediately" protects against.
 **A declaration is an undefined symbol.** `unsafe extern "C" { fn strlen(...) }` emits no code. It tells rustc the
 signature and tells the linker that some other object will define `strlen`. On Linux, std already links the C library,
 so libc's functions resolve without any `#[link]` attribute. A vendor library needs one: `#[link(name = "vse")]` on
-the extern block, or a build script printing `cargo::rustc-link-lib=vse` (not verified here: it needs the library
-installed; Part XXII covers build scripts and `-sys` crates).
+the extern block (verified against a real gcc-built `libvse.so` in §9), or a build script printing
+`cargo::rustc-link-lib=vse` (not verified here: needs a Cargo project; Part XXII covers build scripts and `-sys`
+crates).
 
 Listing `ch02-12-extern-call-asm.rs` wraps `strlen` twice. Release assembly (`tools/emit.ps1`, comments added):
 
@@ -560,7 +561,8 @@ public class Strlen {
 }
 ```
 
-And the JNI version, which needs C glue compiled per platform:
+And the JNI version, which needs C glue compiled per platform (not verified here: requires a JDK's `jni.h`; compile
+with `gcc -shared -fPIC -I$JAVA_HOME/include -I$JAVA_HOME/include/linux`):
 
 ```c
 JNIEXPORT jlong JNICALL Java_Strlen_strlen(JNIEnv *env, jclass cls, jstring s) {
@@ -677,6 +679,47 @@ The `sys` layer would be generated like this (not verified here: requires `bindg
 bindgen include/vse.h -o src/sys.rs \
     --allowlist-function 'vse_.*' --allowlist-var 'VSE_.*' --opaque-type vse_engine
 ```
+
+**The same binding against real C.** The simulation keeps the binding checkable under Miri, but it's still Rust on both
+sides. The Playground's container has `gcc`, so listing `ch02-13-vse-real-c.rs` removes the simulation: it writes the
+vendor's header and a C implementation of `libvse` to `/tmp`, builds it with `gcc -shared -fPIC`, builds the unchanged
+`sys` and `Engine` layers with `rustc`, and runs the result, asserting that every build succeeded. The C side records
+the opening thread exactly as a thread-affine library would (excerpt):
+
+```c
+int vse_score(vse_engine *e, const double *features, size_t n, double *out) {
+    if (!pthread_equal(e->owner, pthread_self())) {
+        snprintf(e->last_error, sizeof e->last_error, "engine used from a thread other than the one that opened it");
+        return VSE_EWRONGTHREAD;
+    }
+    if (n != 3) {
+        snprintf(e->last_error, sizeof e->last_error, "expected 3 features, got %zu", n);
+        return VSE_EINVAL;
+    }
+```
+
+The only change on the Rust side is the attribute that tells the linker where the symbols come from:
+
+```rust,ignore
+    #[link(name = "vse")]
+    unsafe extern "C" {
+        pub safe fn vse_version() -> c_int;
+        pub fn vse_open(path: *const c_char, out: *mut *mut VseEngine) -> c_int;
+```
+
+```text
+built libvse.so (gcc) and the Rust binding (rustc, #[link(name = "vse")]): OK
+libvse.so exports: ["vse_close", "vse_last_error", "vse_open", "vse_score", "vse_version"]
+
+vse_version() = 402 (a `safe` foreign item, implemented in C)
+open(missing.bin): Some(Open { code: 2 })
+score([0.9, 0.5, 0.1]) = Ok(0.62)
+score([0.9]) = Err(Score { code: 1, message: "expected 3 features, got 1" })
+```
+
+The output is identical to the simulated run, which is the point of simulating with the same symbols and ABI: the
+binding can't tell the difference. The `safe fn vse_version` declaration now covers a real C function, and the error
+message now comes from a C `char[128]` owned by the engine, which the wrapper copies before anything else can call in.
 
 ### 10. Failure scenario
 

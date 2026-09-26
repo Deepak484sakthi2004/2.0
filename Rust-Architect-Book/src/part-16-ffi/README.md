@@ -61,10 +61,17 @@ Part XVI Review                      a boundary API review of an "explain" PR (o
 
 ## Listings
 
-`listings/part-16/`: 39 files, 61 checks, all verified on rustc 1.98.1 (edition 2024) with `tools/verify.ps1`: 18
+`listings/part-16/`: 43 files, 65 checks, all verified on rustc 1.98.1 (edition 2024) with `tools/verify.ps1`: 18
 runs under **Miri** (every one clean, on correct code), 9 intended compile errors or denied lints, the
 `#[rustc_abi(debug)]` dump on nightly (checked in debug and release), 3 release builds used for `tools/emit.ps1`
-artifacts, and one test suite. C headers, Java code, `cbindgen`/`bindgen`/`jextract` commands, and Cargo settings for a
-`cdylib` are shown as other-language blocks marked "not verified here," each with the command to run locally. Where a C
-library is needed that the Playground doesn't have, the listing simulates it with Rust functions exported under the
-same C ABI and symbol names, and says so.
+artifacts, and one test suite.
+
+Four listings cross a real language boundary. The Playground's container has `rustc`, `gcc`, and binutils, so they
+write C and Rust sources to `/tmp`, build them (a `cdylib` with `rustc --crate-type cdylib`, C with
+`gcc -Wall -Wextra -Werror`), run the result, and inspect exported symbols with `nm -D`, asserting that every inner
+step succeeded: a Rust binding over a gcc-built C library (16.2), a C program calling the Rust fraud library (16.3), a
+Rust plugin loaded with `dlopen` (16.3), and a C client following every ownership rule, also run under
+AddressSanitizer and LeakSanitizer (16.4). The C headers and C code shown in those sections come from these listings.
+Java code, `cbindgen`/`bindgen`/`jextract` commands, and Cargo settings are marked "not verified here," each with the
+command to run locally. Listings that need a C library *and* Miri simulate it with Rust functions exported under the
+same C ABI and symbol names, and say so.
